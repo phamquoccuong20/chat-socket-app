@@ -10,6 +10,9 @@ COPY prisma ./prisma/
 # Install all dependencies (including devDependencies for build)
 RUN npm ci --legacy-peer-deps
 
+# Provide dummy/default DATABASE_URL during build for Prisma Client generation
+ENV DATABASE_URL="sqlserver://localhost:1433;database=chat_db;user=sa;password=Chat@123456;trustServerCertificate=true"
+
 # Generate Prisma Client
 RUN npx prisma generate
 
@@ -18,9 +21,6 @@ COPY . .
 
 # Build application
 RUN npm run build
-
-# Remove development dependencies to reduce image size
-RUN npm prune --production
 
 # Production Runner
 FROM node:20-alpine AS runner
