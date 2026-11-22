@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String       @id @default(uuid())
+  username    String       @unique
+  phone       String?      @unique
+  displayName String
+  password    String       @default("") // Mật khẩu băm bảo mật bcrypt
+  avatarUrl   String?
+  createdAt   DateTime     @default(now())
+  messages    Message[]
+  memberships RoomMember[]
+
+  @@map("users")
+}
+
+model Room {
+  id        String       @id @default(uuid())
+  name      String?
+  isGroup   Boolean      @default(false)
+  creatorId String?
+  createdAt DateTime     @default(now())
+  messages  Message[]
+  members   RoomMember[]
+
+  @@map("rooms")
+}
+
+model RoomMember {
+  id       String   @id @default(uuid())
+  userId   String
+  roomId   String
+  joinedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roomId])
+  @@map("room_members")
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  content        String
+  fileUrl        String?
+  fileName       String?
+  fileType       String?
+  fileSize       Int?
+  isRevoked      Boolean  @default(false)
+  isPinned       Boolean  @default(false)
+  replyToId      String?
+  replyToSender  String?
+  replyToContent String?
+  createdAt      DateTime @default(now())
+  senderId       String
+  roomId         String
+
+  sender User @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  room   Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}

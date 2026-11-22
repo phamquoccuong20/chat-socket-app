@@ -1,0 +1,12 @@
+node_modules
+dist
+npm-debug.log*
+.env
+.env.*
+!.env.example
+uploads/*
+!uploads/.gitkeep
+test
+coverage
+*.md
+
