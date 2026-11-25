@@ -170,6 +170,7 @@ export default function ChatApp() {
 
   // Danh sách Nhóm chat (Group Chat) từ SQL Server
   const [groupList, setGroupList] = useState<any[]>([]);
+  const [mobileActiveView, setMobileActiveView] = useState<"sidebar" | "chat">("sidebar");
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
@@ -817,6 +818,7 @@ export default function ChatApp() {
     if (!socket || (activeTab === "channel" && roomId === currentRoom)) return;
     setActiveTab("channel");
     setCurrentRoom(roomId);
+    setMobileActiveView("chat");
     setDmTargetUser(null);
     setMessages([]);
     socket.emit("joinRoom", { roomId, username });
@@ -847,6 +849,7 @@ export default function ChatApp() {
 
     setActiveTab("dm");
     setCurrentRoom(dmRoom);
+    setMobileActiveView("chat");
     setDmTargetUser(targetDisplayName);
     setMessages([]);
 
@@ -2051,7 +2054,7 @@ export default function ChatApp() {
   return (
     <div className="flex h-screen bg-[#0d1117] text-slate-200 overflow-hidden font-sans selection:bg-indigo-500 selection:text-white">
       {/* 1. SIDEBAR TRÁI: KÊNH NHÓM + TIN NHẮN RIÊNG 1-1 */}
-      <aside className="w-72 bg-[#161b22] border-r border-slate-800/80 flex flex-col justify-between shrink-0">
+      <aside className={`w-full md:w-72 bg-[#161b22] border-r border-slate-800/80 flex flex-col justify-between shrink-0 ${mobileActiveView === "chat" ? "hidden md:flex" : "flex"}`}>
         <div className="overflow-y-auto flex-1">
           {/* Header Sidebar: Ô Tìm kiếm hội thoại & Nút Thao tác nhanh (Phong cách Zalo/Telegram) */}
           <div className="h-16 px-3.5 border-b border-slate-800/80 flex items-center gap-2 shrink-0">
@@ -2428,9 +2431,17 @@ export default function ChatApp() {
       </aside>
 
       {/* 2. KHUNG CHAT CHÍNH */}
-      <main className="flex-1 flex flex-col bg-[#0d1117] min-w-0">
-        <header className="h-16 px-6 border-b border-slate-800/80 bg-[#161b22]/90 backdrop-blur-md flex items-center justify-between shrink-0 relative z-30">
-          <div className="flex items-center gap-3 min-w-0">
+      <main className={`flex-1 flex flex-col bg-[#0d1117] min-w-0 ${mobileActiveView === "sidebar" ? "hidden md:flex" : "flex"}`}>
+        <header className="h-16 px-4 md:px-6 border-b border-slate-800/80 bg-[#161b22]/90 backdrop-blur-md flex items-center justify-between shrink-0 relative z-30">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobileActiveView("sidebar")}
+              className="md:hidden p-2 -ml-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer shrink-0"
+              title="Quay lại danh sách hội thoại"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
             {activeTab === "channel" ? (
               activeChannelObj.isGroup ? (
                 <>
@@ -3472,7 +3483,7 @@ export default function ChatApp() {
 
       {/* 3. SIDEBAR PHẢI: KHO LƯU TRỮ FILE & ẢNH (Zalo-style Media Drawer) */}
       {showMediaDrawer && (
-        <aside className="w-80 md:w-88 xl:w-96 bg-[#161b22] border-l border-slate-800/80 flex flex-col shrink-0 z-20 animate-in slide-in-from-right duration-200">
+        <aside className="fixed inset-y-0 right-0 z-40 w-full sm:w-80 md:w-88 xl:w-96 bg-[#161b22] border-l border-slate-800/80 flex flex-col shrink-0 shadow-2xl md:static md:shadow-none animate-in slide-in-from-right duration-200">
           {/* Header Drawer */}
           <div className="h-16 px-4 border-b border-slate-800/80 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -3700,8 +3711,8 @@ export default function ChatApp() {
 
       {/* MODAL TÌM BẠN QUA SỐ ĐIỆN THOẠI / TÊN */}
       {showSearchFriendModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-6 shadow-2xl relative">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative my-auto max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2.5">
                 <div className="p-2.5 bg-indigo-600/20 text-indigo-400 rounded-xl">
@@ -3813,11 +3824,11 @@ export default function ChatApp() {
       {/* MODAL CÀI ĐẶT HỒ SƠ & ĐỔI MẬT KHẨU */}
       {showProfileModal && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150"
           onClick={handleCloseProfileModal}
         >
           <div
-            className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-6 shadow-2xl relative"
+            className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-5">
@@ -3894,7 +3905,7 @@ export default function ChatApp() {
 
             {/* TAB 1: CẬP NHẬT HỒ SƠ & AVATAR */}
             {profileTab === "info" ? (
-              <form onSubmit={handleSaveProfile} className="space-y-4">
+              <form onSubmit={handleSaveProfile} className="space-y-4 overflow-y-auto pr-1 flex-1">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
                     Ảnh đại diện / Avatar
@@ -4039,7 +4050,7 @@ export default function ChatApp() {
               </form>
             ) : (
               /* TAB 2: ĐỔI MẬT KHẨU */
-              <form onSubmit={handleChangePassword} className="space-y-4">
+              <form onSubmit={handleChangePassword} className="space-y-4 overflow-y-auto pr-1 flex-1">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                     Mật khẩu hiện tại
@@ -4625,8 +4636,8 @@ export default function ChatApp() {
 
       {/* MODAL ĐỔI TÊN & ẢNH ĐẠI DIỆN NHÓM */}
       {showEditGroupModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-6 shadow-2xl relative">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative my-auto max-h-[90vh] flex flex-col overflow-y-auto">
             <button
               type="button"
               onClick={() => setShowEditGroupModal(false)}
