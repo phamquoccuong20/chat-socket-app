@@ -690,12 +690,14 @@ export default function ChatApp() {
         setAuthError("Vui lòng nhập tên hiển thị của bạn!");
         return;
       }
-      if (authPhone.trim()) {
-        const phoneRegex = /(84|0[3|5|7|8|9])+([0-9]{8})\b/;
-        if (!phoneRegex.test(authPhone.trim())) {
-          setAuthError("Số điện thoại không hợp lệ! Vui lòng nhập đúng 10 số (ví dụ: 0912345678).");
-          return;
-        }
+      if (!authPhone.trim()) {
+        setAuthError("Vui lòng nhập số điện thoại! Mỗi số điện thoại chỉ được đăng ký 1 tài khoản.");
+        return;
+      }
+      const phoneRegex = /^(0|84|\+84)(3|5|7|8|9)[0-9]{8}$/;
+      if (!phoneRegex.test(authPhone.trim().replace(/\s+/g, ""))) {
+        setAuthError("Số điện thoại không hợp lệ! Vui lòng nhập đúng 10 số (ví dụ: 0912345678).");
+        return;
       }
       const pwdError = validatePasswordComplexity(authPassword);
       if (pwdError) {
@@ -1800,14 +1802,15 @@ export default function ChatApp() {
             {authMode === "register" && (
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
-                  <span>Số điện thoại</span>
-                  <span className="text-[10px] text-slate-500 font-normal lowercase">(dùng để đăng nhập & tìm bạn)</span>
+                  <span>Số điện thoại <span className="text-rose-400">*</span></span>
+                  <span className="text-[10px] text-slate-500 font-normal lowercase">(mỗi SĐT chỉ tạo 1 tài khoản)</span>
                 </label>
                 <div className="relative">
                   <Phone className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
                   <input
                     type="tel"
-                    placeholder="Ví dụ: 0912345678..."
+                    required
+                    placeholder="Ví dụ: 0912345678 (bắt buộc)..."
                     value={authPhone}
                     onChange={(e) => {
                       setAuthPhone(e.target.value);

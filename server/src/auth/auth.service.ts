@@ -22,15 +22,34 @@ export class AuthService {
     }
   }
 
-  // Đăng ký tài khoản mới (kèm số điện thoại)
+  // Đăng ký tài khoản mới (bắt buộc số điện thoại và mỗi số điện thoại chỉ được 1 tài khoản duy nhất)
   async register(username: string, displayName: string, password: string, phone?: string) {
     const cleanUsername = username.trim().toLowerCase();
-    const cleanPhone = phone ? phone.trim().replace(/\s+/g, '') : undefined;
+    const rawPhone = (phone || '').trim().replace(/\s+/g, '');
+
+    // 1. Bắt buộc phải có số điện thoại
+    if (!rawPhone) {
+      throw new BadRequestException('Vui lòng nhập số điện thoại! Mỗi số điện thoại chỉ được đăng ký 1 tài khoản.');
+    }
+
+    // 2. Kiểm tra định dạng số điện thoại Việt Nam
+    const phoneRegex = /^(0|84|\+84)(3|5|7|8|9)[0-9]{8}$/;
+    if (!phoneRegex.test(rawPhone)) {
+      throw new BadRequestException('Số điện thoại không hợp lệ! Vui lòng nhập đúng số điện thoại (ví dụ: 0912345678).');
+    }
+
+    // 3. Chuẩn hóa số điện thoại về định dạng 0xxxxxxxxx để tránh trùng lặp giữa 84 và 0
+    let cleanPhone = rawPhone;
+    if (cleanPhone.startsWith('+84')) {
+      cleanPhone = '0' + cleanPhone.slice(3);
+    } else if (cleanPhone.startsWith('84') && cleanPhone.length === 11) {
+      cleanPhone = '0' + cleanPhone.slice(2);
+    }
     
-    // Kiểm tra độ phức tạp mật khẩu
+    // 4. Kiểm tra độ phức tạp mật khẩu
     this.validatePasswordComplexity(password);
 
-    // Kiểm tra tên đăng nhập đã tồn tại chưa
+    // 5. Kiểm tra tên đăng nhập đã tồn tại chưa
     const existingUser = await this.prisma.user.findUnique({
       where: { username: cleanUsername },
     });
@@ -39,15 +58,18 @@ export class AuthService {
       throw new BadRequestException('Tên đăng nhập này đã được sử dụng!');
     }
 
-    // Kiểm tra số điện thoại đã tồn tại chưa
-    if (cleanPhone) {
-      const existingPhone = await this.prisma.user.findFirst({
-        where: { phone: cleanPhone },
-      });
+    // 6. Kiểm tra số điện thoại đã tồn tại chưa (Ràng buộc: 1 SĐT chỉ 1 tài khoản)
+    const existingPhone = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone: cleanPhone },
+          { phone: rawPhone },
+        ],
+      },
+    });
 
-      if (existingPhone) {
-        throw new BadRequestException('Số điện thoại này đã được đăng ký cho tài khoản khác!');
-      }
+    if (existingPhone) {
+      throw new BadRequestException('Số điện thoại này đã được đăng ký cho tài khoản khác! Mỗi số điện thoại chỉ được tạo 1 tài khoản duy nhất.');
     }
 
     // Mã hóa mật khẩu bảo mật bằng bcrypt
@@ -57,7 +79,7 @@ export class AuthService {
       data: {
         username: cleanUsername,
         displayName: displayName.trim() || cleanUsername,
-        phone: cleanPhone || null,
+        phone: cleanPhone,
         password: hashedPassword,
       },
     });
@@ -78,12 +100,21 @@ export class AuthService {
   async login(account: string, password: string) {
     const cleanAccount = account.trim();
 
+    // Chuẩn hóa số điện thoại nếu người dùng nhập dạng +84 hoặc 84
+    let normalizedPhone = cleanAccount.replace(/\s+/g, '');
+    if (normalizedPhone.startsWith('+84')) {
+      normalizedPhone = '0' + normalizedPhone.slice(3);
+    } else if (normalizedPhone.startsWith('84') && normalizedPhone.length === 11) {
+      normalizedPhone = '0' + normalizedPhone.slice(2);
+    }
+
     // Tìm kiếm bằng username hoặc phone
     const user = await this.prisma.user.findFirst({
       where: {
         OR: [
           { username: cleanAccount.toLowerCase() },
           { phone: cleanAccount },
+          { phone: normalizedPhone },
         ],
       },
     });
