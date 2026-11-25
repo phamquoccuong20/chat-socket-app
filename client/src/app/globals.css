@@ -24,3 +24,302 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ========================================================
+   GIAO DIỆN SÁNG (LIGHT MODE) PHONG CÁCH TELEGRAM / MESSENGER
+   - Nền chat xám xanh dịu mắt (#f0f2f5)
+   - Sidebar trắng tinh tế (#ffffff) với viền chia tách nhẹ
+   - Bong bóng chat trắng nổi bật với bóng đổ mềm
+   - Thanh nhập tin nhắn bo tròn mềm mại
+   ======================================================== */
+
+.light-mode {
+  background-color: #f0f2f5 !important;
+  color: #0f172a !important;
+}
+
+/* 1. Bố cục chính (Layout) */
+.light-mode aside {
+  background-color: #ffffff !important;
+  border-right: 1px solid #e4e6eb !important;
+  box-shadow: 1px 0 3px rgba(0, 0, 0, 0.02) !important;
+}
+
+.light-mode header {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #e4e6eb !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03) !important;
+  color: #0f172a !important;
+}
+
+.light-mode main {
+  background-color: #f0f2f5 !important;
+}
+
+/* 2. Nền các khối giao diện (Modals, Popups, Menus) */
+.light-mode .bg-\[\#0a0d14\],
+.light-mode .bg-\[\#0d1117\] {
+  background-color: #f0f2f5 !important;
+}
+
+.light-mode .bg-\[\#161b22\] {
+  background-color: #ffffff !important;
+  border-color: #e4e6eb !important;
+}
+
+.light-mode .bg-\[\#161b22\]\/98,
+.light-mode .bg-\[\#161b22\]\/95,
+.light-mode .bg-\[\#161b22\]\/90,
+.light-mode .bg-\[\#161b22\]\/70 {
+  background-color: rgba(255, 255, 255, 0.98) !important;
+  border-color: #e4e6eb !important;
+}
+
+.light-mode .bg-slate-900,
+.light-mode .bg-slate-900\/90,
+.light-mode .bg-slate-900\/80,
+.light-mode .bg-slate-900\/60,
+.light-mode .bg-slate-900\/40,
+.light-mode .bg-slate-950,
+.light-mode .bg-slate-950\/80,
+.light-mode .bg-slate-950\/70,
+.light-mode .bg-slate-950\/50 {
+  background-color: #f0f2f5 !important;
+  color: #0f172a !important;
+}
+
+.light-mode .bg-slate-800,
+.light-mode .bg-slate-800\/90,
+.light-mode .bg-slate-800\/80,
+.light-mode .bg-slate-800\/60,
+.light-mode .bg-slate-800\/40 {
+  background-color: #f0f2f5 !important;
+  color: #374151 !important;
+}
+
+/* 3. Viền (Borders) mềm mại chuẩn Messenger */
+.light-mode .border-slate-800,
+.light-mode .border-slate-800\/80,
+.light-mode .border-slate-800\/60,
+.light-mode .border-slate-800\/90,
+.light-mode .border-slate-700,
+.light-mode .border-slate-700\/80,
+.light-mode .border-slate-700\/90,
+.light-mode .border-slate-700\/50 {
+  border-color: #e4e6eb !important;
+}
+
+.light-mode .border-\[\#161b22\] {
+  border-color: #ffffff !important;
+}
+
+/* 4. Sidebar: Tìm kiếm & Danh sách kênh/bạn bè */
+.light-mode aside input {
+  background-color: #f0f2f5 !important;
+  border: 1px solid transparent !important;
+  color: #050505 !important;
+}
+
+.light-mode aside input:focus {
+  background-color: #ffffff !important;
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15) !important;
+}
+
+/* Kênh / Người dùng chưa chọn */
+.light-mode aside button:hover,
+.light-mode aside .hover\:bg-slate-800\/60:hover {
+  background-color: #f0f2f5 !important;
+  color: #0f172a !important;
+}
+
+/* Kênh / Nhóm / DM đang chọn (Active) */
+.light-mode .bg-indigo-600 {
+  background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25) !important;
+}
+
+/* Badge số lượng trong sidebar */
+.light-mode aside .bg-slate-800 {
+  background-color: #e4e6eb !important;
+  color: #4b5563 !important;
+}
+
+/* 5. Bong bóng tin nhắn (Message Bubbles) */
+/* Tin nhắn người khác gửi (nền trắng nổi trên nền xám xanh) */
+.light-mode .bg-\[\#1f242c\] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(0, 0, 0, 0.05) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+}
+
+.light-mode .bg-\[\#1f242c\] * {
+  color: #0f172a !important;
+}
+
+/* Trích dẫn trả lời (quote) trong tin nhắn người khác */
+.light-mode .bg-\[\#1f242c\] .bg-slate-950\/50,
+.light-mode .bg-\[\#1f242c\] .bg-slate-950\/70 {
+  background-color: #f0f2f5 !important;
+  border-left-color: #4f46e5 !important;
+}
+
+.light-mode .bg-\[\#1f242c\] .bg-slate-950\/50 *,
+.light-mode .bg-\[\#1f242c\] .bg-slate-950\/70 * {
+  color: #374151 !important;
+}
+
+/* Tệp đính kèm trong tin nhắn người khác */
+.light-mode .bg-\[\#1f242c\] .bg-black\/25 {
+  background-color: #f8fafc !important;
+  border: 1px solid #e4e6eb !important;
+}
+
+.light-mode .bg-\[\#1f242c\] .bg-black\/25 * {
+  color: #0f172a !important;
+}
+
+.light-mode .bg-\[\#1f242c\] .bg-black\/25 a {
+  color: #4f46e5 !important;
+}
+
+/* Tin nhắn của chính mình (isMe) */
+.light-mode .bg-gradient-to-r.from-indigo-600.to-indigo-500 {
+  background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25) !important;
+}
+
+.light-mode .bg-gradient-to-r.from-indigo-600.to-indigo-500 * {
+  color: #ffffff !important;
+}
+
+/* Tin nhắn thu hồi */
+.light-mode .italic.bg-slate-900\/60 {
+  background-color: #ffffff !important;
+  border: 1px solid #e4e6eb !important;
+  color: #9ca3af !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+}
+
+/* 6. Thanh nhập liệu (Input Bar) */
+.light-mode .bg-\[\#161b22\]\/70.border-t {
+  background-color: #ffffff !important;
+  border-top: 1px solid #e4e6eb !important;
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02) !important;
+}
+
+.light-mode .focus-within\:border-indigo-500 {
+  background-color: #f0f2f5 !important;
+  border: 1px solid transparent !important;
+}
+
+.light-mode .focus-within\:border-indigo-500:focus-within {
+  background-color: #ffffff !important;
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12) !important;
+}
+
+.light-mode input,
+.light-mode textarea {
+  color: #0f172a !important;
+}
+
+.light-mode input::placeholder,
+.light-mode textarea::placeholder {
+  color: #8a8d91 !important;
+}
+
+/* Khung hiển thị đang trả lời tin nhắn trên thanh nhập */
+.light-mode .bg-\[\#161b22\].border-indigo-500\/40 {
+  background-color: #eef2ff !important;
+  border-color: #c7d2fe !important;
+}
+
+.light-mode .bg-\[\#161b22\].border-indigo-500\/40 .text-white {
+  color: #3730a3 !important;
+}
+
+/* 7. Thanh Pinned Message */
+.light-mode .bg-\[\#12161f\]\/98 {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #e4e6eb !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03) !important;
+}
+
+.light-mode .bg-\[\#12161f\]\/98 * {
+  color: #4f46e5 !important;
+}
+
+/* 8. Màu chữ & Tương phản (Typography) */
+.light-mode .text-white {
+  color: #0f172a !important;
+}
+
+.light-mode header,
+.light-mode header .text-white,
+.light-mode aside .text-white {
+  color: #0f172a !important;
+}
+
+.light-mode .text-slate-400 {
+  color: #65676b !important;
+}
+
+.light-mode .text-slate-500 {
+  color: #6b7280 !important;
+}
+
+.light-mode .text-slate-300,
+.light-mode .text-slate-200,
+.light-mode .text-slate-100 {
+  color: #050505 !important;
+}
+
+/* Bắt buộc giữ chữ trắng sắc nét cho các nút/badge rực rỡ và avatar */
+.light-mode .bg-indigo-600,
+.light-mode .bg-indigo-600 *,
+.light-mode .bg-indigo-500,
+.light-mode .bg-indigo-500 *,
+.light-mode .bg-purple-600,
+.light-mode .bg-purple-600 *,
+.light-mode .bg-emerald-600,
+.light-mode .bg-emerald-600 *,
+.light-mode .bg-rose-600,
+.light-mode .bg-rose-600 *,
+.light-mode .bg-blue-600,
+.light-mode .bg-blue-600 *,
+.light-mode .bg-amber-600,
+.light-mode .bg-amber-600 *,
+.light-mode [class*="bg-gradient-"],
+.light-mode [class*="bg-gradient-"] *,
+.light-mode .bg-indigo-600 .text-white,
+.light-mode .bg-indigo-500 .text-white,
+.light-mode [class*="bg-gradient-"] .text-white,
+.light-mode button.bg-indigo-600,
+.light-mode button.bg-indigo-600 *,
+.light-mode button.bg-indigo-600 .text-white,
+.light-mode button[type="submit"],
+.light-mode button[type="submit"] *,
+.light-mode button[type="submit"] .text-white {
+  color: #ffffff !important;
+}
+
+/* 9. Thao tác hover & Dropdown Menus */
+.light-mode .shadow-2xl {
+  box-shadow: 0 12px 28px 0 rgba(0, 0, 0, 0.12), 0 2px 4px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+.light-mode button[title="Trả lời tin nhắn này"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e4e6eb !important;
+  color: #65676b !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+}
+
+.light-mode button[title="Trả lời tin nhắn này"]:hover {
+  background-color: #f0f2f5 !important;
+  color: #050505 !important;
+}

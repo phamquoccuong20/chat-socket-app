@@ -52,6 +52,8 @@ import {
   Image as ImageIcon,
   Reply,
   Crown,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -171,6 +173,22 @@ export default function ChatApp() {
   // Danh sách Nhóm chat (Group Chat) từ SQL Server
   const [groupList, setGroupList] = useState<any[]>([]);
   const [mobileActiveView, setMobileActiveView] = useState<"sidebar" | "chat">("sidebar");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    try {
+      const savedTheme = localStorage.getItem("chat_theme") as "dark" | "light";
+      if (savedTheme) setTheme(savedTheme);
+    } catch {}
+  }, []);
+
+  const toggleTheme = () => {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+    try {
+      localStorage.setItem("chat_theme", nextTheme);
+    } catch {}
+  };
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
@@ -1679,35 +1697,87 @@ export default function ChatApp() {
   // Đang kiểm tra phiên đăng nhập từ localStorage
   if (isAuthChecking) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0a0d14] text-slate-400">
+      <div className={`flex min-h-screen items-center justify-center transition-colors duration-200 ${
+        theme === "light" ? "bg-[#f0f2f5] text-slate-600" : "bg-[#0a0d14] text-slate-400"
+      }`}>
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-          <span className="text-xs font-medium text-slate-400 tracking-wide">Đang khôi phục phiên làm việc...</span>
-    </div>
-  </div>
+          <span className="text-xs font-medium tracking-wide">Đang khôi phục phiên làm việc...</span>
+        </div>
+      </div>
     );
   }
 
   // MÀN HÌNH ĐĂNG KÝ / ĐĂNG NHẬP BẢO MẬT BẰNG MẬT KHẨU
   if (!hasJoined) {
+    const isLight = theme === "light";
     return (
-      <div className="relative flex min-h-screen items-center justify-center bg-[#0a0d14] px-4 overflow-hidden selection:bg-indigo-500 selection:text-white">
-        <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div className={`relative min-h-screen flex items-center justify-center px-4 py-8 overflow-hidden selection:bg-indigo-500 selection:text-white transition-colors duration-300 ${
+        isLight ? "bg-[#f0f2f5] text-slate-800" : "bg-[#0a0d14] text-slate-100"
+      }`}>
+        {/* Vệt sáng trang trí background (Ambient Glow) */}
+        <div className={`absolute -top-40 -left-40 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity ${
+          isLight ? "bg-indigo-300/40" : "bg-indigo-600/20"
+        }`}></div>
+        <div className={`absolute -bottom-40 -right-40 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity ${
+          isLight ? "bg-purple-300/40" : "bg-purple-600/20"
+        }`}></div>
 
-        <div className="relative w-full max-w-md rounded-3xl bg-slate-900/80 p-8 shadow-2xl backdrop-blur-xl border border-slate-800/80">
-          <div className="flex flex-col items-center text-center mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 mb-4">
-              <MessageSquare className="w-8 h-8 text-white" />
+        {/* Nút chuyển đổi Theme sáng/tối góc trên bên phải */}
+        <div className="absolute top-4 right-4 z-20">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all shadow-sm border cursor-pointer ${
+              isLight
+                ? "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 shadow-slate-200"
+                : "bg-slate-900/80 text-slate-300 border-slate-800 hover:bg-slate-800"
+            }`}
+            title={isLight ? "Chuyển sang giao diện Tối" : "Chuyển sang giao diện Sáng"}
+          >
+            {isLight ? (
+              <>
+                <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Giao diện Sáng</span>
+              </>
+            ) : (
+              <>
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <span>Giao diện Tối</span>
+              </>
+            )}
+          </button>
         </div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">Antigravity Chat</h1>
-            <p className="text-sm text-slate-400 mt-1">
+
+        {/* Khung Card chính (Glassmorphic Card) */}
+        <div className={`relative w-full max-w-md rounded-3xl p-7 sm:p-9 shadow-2xl backdrop-blur-2xl border transition-all duration-300 ${
+          isLight
+            ? "bg-white/95 border-slate-200/90 shadow-slate-300/40"
+            : "bg-slate-900/80 border-slate-800/90 shadow-indigo-950/40"
+        }`}>
+          {/* Header Card: Logo & Tiêu đề */}
+          <div className="flex flex-col items-center text-center mb-6">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 via-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 mb-3.5 ring-4 ring-indigo-500/10 transform hover:scale-105 transition duration-200">
+              <MessageSquare className="w-8 h-8 text-white" />
+            </div>
+            <h1 className={`text-2xl font-extrabold tracking-tight ${
+              isLight ? "text-slate-900" : "text-white"
+            }`}>
+              Antigravity Chat
+            </h1>
+            <p className={`text-xs mt-1 max-w-xs ${
+              isLight ? "text-slate-500" : "text-slate-400"
+            }`}>
               Kết nối và trò chuyện thời gian thực mọi lúc, mọi nơi
             </p>
-      </div>
+          </div>
 
           {/* Tab chuyển đổi Đăng nhập / Đăng ký */}
-          <div className="flex p-1 bg-slate-950/80 rounded-2xl border border-slate-800 mb-6">
+          <div className={`flex p-1 rounded-2xl mb-6 border transition-colors ${
+            isLight
+              ? "bg-slate-100/90 border-slate-200/80"
+              : "bg-slate-950/80 border-slate-800"
+          }`}>
             <button
               type="button"
               onClick={() => {
@@ -1715,9 +1785,11 @@ export default function ChatApp() {
                 setAuthError("");
                 setAuthSuccess("");
               }}
-              className={`flex-1 py-2 text-xs font-semibold rounded-xl transition cursor-pointer ${
+              className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
                 authMode === "login"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                  ? "bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-md shadow-indigo-600/25"
+                  : isLight
+                  ? "text-slate-600 hover:text-slate-900"
                   : "text-slate-400 hover:text-white"
               }`}
             >
@@ -1730,60 +1802,74 @@ export default function ChatApp() {
                 setAuthError("");
                 setAuthSuccess("");
               }}
-              className={`flex-1 py-2 text-xs font-semibold rounded-xl transition cursor-pointer ${
+              className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
                 authMode === "register"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                  ? "bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-md shadow-indigo-600/25"
+                  : isLight
+                  ? "text-slate-600 hover:text-slate-900"
                   : "text-slate-400 hover:text-white"
               }`}
             >
               Đăng ký tài khoản
             </button>
-      </div>
+          </div>
 
           {/* Thông báo lỗi / thành công */}
           {authError && (
-            <div className="flex items-center gap-2 mb-4 px-3.5 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs animate-in fade-in">
+            <div className="flex items-center gap-2 mb-4 px-3.5 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs animate-in fade-in">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{authError}</span>
-        </div>
+            </div>
           )}
 
           {authSuccess && (
-            <div className="flex items-center gap-2 mb-4 px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs animate-in fade-in">
+            <div className="flex items-center gap-2 mb-4 px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>{authSuccess}</span>
-        </div>
+            </div>
           )}
 
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             {/* Tên đăng nhập / Số điện thoại */}
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1.5 ${
+                isLight ? "text-slate-700" : "text-slate-300"
+              }`}>
                 {authMode === "login" ? "Tên đăng nhập hoặc Số điện thoại" : "Tên đăng nhập"}
               </label>
               <div className="relative">
-                <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                <User className={`absolute left-3.5 top-3.5 w-4 h-4 ${
+                  isLight ? "text-slate-400" : "text-slate-500"
+                }`} />
                 <input
                   type="text"
-                  placeholder={authMode === "login" ? "Nhập tên đăng nhập hoặc số điện thoại..." : "Tên đăng nhập"}
+                  placeholder={authMode === "login" ? "Nhập tên đăng nhập hoặc số điện thoại..." : "Tên đăng nhập..."}
                   value={authUsername}
                   onChange={(e) => {
                     setAuthUsername(e.target.value);
                     if (authError) setAuthError("");
                   }}
-                  className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-3 pl-10 pr-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition duration-200"
+                  className={`w-full rounded-xl py-3 pl-10 pr-4 text-sm transition duration-200 outline-none border ${
+                    isLight
+                      ? "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                      : "bg-slate-950/80 border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                  }`}
                 />
-          </div>
-        </div>
+              </div>
+            </div>
 
             {/* Tên hiển thị (chỉ hiện khi Đăng ký) */}
             {authMode === "register" && (
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1.5 ${
+                  isLight ? "text-slate-700" : "text-slate-300"
+                }`}>
                   Tên hiển thị đầy đủ
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                  <User className={`absolute left-3.5 top-3.5 w-4 h-4 ${
+                    isLight ? "text-slate-400" : "text-slate-500"
+                  }`} />
                   <input
                     type="text"
                     placeholder="Ví dụ: Phạm Quốc Cường..."
@@ -1792,21 +1878,31 @@ export default function ChatApp() {
                       setAuthDisplayName(e.target.value);
                       if (authError) setAuthError("");
                     }}
-                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-3 pl-10 pr-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition duration-200"
+                    className={`w-full rounded-xl py-3 pl-10 pr-4 text-sm transition duration-200 outline-none border ${
+                      isLight
+                        ? "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                        : "bg-slate-950/80 border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                    }`}
                   />
-            </div>
-          </div>
+                </div>
+              </div>
             )}
 
             {/* Số điện thoại (chỉ hiện khi Đăng ký) */}
             {authMode === "register" && (
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
-                  <span>Số điện thoại <span className="text-rose-400">*</span></span>
-                  <span className="text-[10px] text-slate-500 font-normal lowercase">(mỗi SĐT chỉ tạo 1 tài khoản)</span>
+                <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1.5 flex items-center justify-between ${
+                  isLight ? "text-slate-700" : "text-slate-300"
+                }`}>
+                  <span>Số điện thoại <span className="text-rose-500">*</span></span>
+                  <span className={`text-[10px] font-normal lowercase ${
+                    isLight ? "text-slate-500" : "text-slate-400"
+                  }`}>(mỗi SĐT chỉ tạo 1 tài khoản)</span>
                 </label>
                 <div className="relative">
-                  <Phone className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                  <Phone className={`absolute left-3.5 top-3.5 w-4 h-4 ${
+                    isLight ? "text-slate-400" : "text-slate-500"
+                  }`} />
                   <input
                     type="tel"
                     required
@@ -1816,19 +1912,27 @@ export default function ChatApp() {
                       setAuthPhone(e.target.value);
                       if (authError) setAuthError("");
                     }}
-                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-3 pl-10 pr-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition duration-200"
+                    className={`w-full rounded-xl py-3 pl-10 pr-4 text-sm transition duration-200 outline-none border ${
+                      isLight
+                        ? "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                        : "bg-slate-950/80 border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                    }`}
                   />
-            </div>
-          </div>
+                </div>
+              </div>
             )}
 
             {/* Mật khẩu */}
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1.5 ${
+                isLight ? "text-slate-700" : "text-slate-300"
+              }`}>
                 Mật khẩu
               </label>
               <div className="relative">
-                <Lock className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                <Lock className={`absolute left-3.5 top-3.5 w-4 h-4 ${
+                  isLight ? "text-slate-400" : "text-slate-500"
+                }`} />
                 <input
                   type={showPassword ? "text" : "password"}
                   placeholder={authMode === "register" ? "Tối thiểu 6 ký tự (Hoa, thường, ký tự đặc biệt)..." : "Nhập mật khẩu..."}
@@ -1837,18 +1941,26 @@ export default function ChatApp() {
                     setAuthPassword(e.target.value);
                     if (authError) setAuthError("");
                   }}
-                  className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-3 pl-10 pr-10 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition duration-200"
+                  className={`w-full rounded-xl py-3 pl-10 pr-10 text-sm transition duration-200 outline-none border ${
+                    isLight
+                      ? "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                      : "bg-slate-950/80 border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                  }`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-3.5 text-slate-500 hover:text-slate-300 transition"
+                  className={`absolute right-3.5 top-3.5 transition cursor-pointer ${
+                    isLight ? "text-slate-400 hover:text-slate-700" : "text-slate-500 hover:text-slate-300"
+                  }`}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
               {authMode === "register" && (
-                <p className="text-[11px] text-slate-400 mt-1.5">
+                <p className={`text-[11px] mt-1.5 leading-normal ${
+                  isLight ? "text-slate-500" : "text-slate-400"
+                }`}>
                   * Gồm tối thiểu 6 ký tự, có chữ hoa, chữ thường và ít nhất 1 ký tự đặc biệt (!@#$%...).
                 </p>
               )}
@@ -1857,11 +1969,15 @@ export default function ChatApp() {
             {/* Xác nhận mật khẩu (khi Đăng ký) */}
             {authMode === "register" && (
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1.5 ${
+                  isLight ? "text-slate-700" : "text-slate-300"
+                }`}>
                   Xác nhận lại mật khẩu
                 </label>
                 <div className="relative">
-                  <Lock className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                  <Lock className={`absolute left-3.5 top-3.5 w-4 h-4 ${
+                    isLight ? "text-slate-400" : "text-slate-500"
+                  }`} />
                   <input
                     type={showPassword ? "text" : "password"}
                     placeholder="Nhập lại mật khẩu trên..."
@@ -1870,38 +1986,55 @@ export default function ChatApp() {
                       setAuthConfirmPassword(e.target.value);
                       if (authError) setAuthError("");
                     }}
-                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-3 pl-10 pr-4 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition duration-200"
+                    className={`w-full rounded-xl py-3 pl-10 pr-4 text-sm transition duration-200 outline-none border ${
+                      isLight
+                        ? "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                        : "bg-slate-950/80 border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                    }`}
                   />
-            </div>
-          </div>
+                </div>
+              </div>
             )}
 
-            <div className="flex items-center justify-between pt-1 px-1 text-xs">
-              <span className="text-slate-400">Máy chủ Socket:</span>
+            {/* Trạng thái kết nối Socket */}
+            <div className={`flex items-center justify-between pt-1 px-1 text-xs ${
+              isLight ? "text-slate-600" : "text-slate-400"
+            }`}>
+              <span>Máy chủ Socket:</span>
               {isConnected ? (
-                <span className="flex items-center text-emerald-400 gap-1.5 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="flex items-center text-emerald-500 gap-1.5 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                   Đã kết nối
                 </span>
               ) : (
-                <span className="flex items-center text-amber-400 gap-1.5 font-medium">
+                <span className="flex items-center text-amber-500 gap-1.5 font-medium">
                   <WifiOff className="w-3.5 h-3.5" />
                   Đang đợi Server...
                 </span>
               )}
-        </div>
+            </div>
 
+            {/* Nút bấm Submit */}
             <button
               type="submit"
               disabled={isSubmitting || !isConnected}
-              className="w-full mt-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 py-3.5 font-semibold text-white text-sm transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/25 cursor-pointer flex items-center justify-center gap-2"
+              className="w-full mt-2 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:scale-[0.99] py-3.5 font-bold text-white text-sm transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-600/30 cursor-pointer flex items-center justify-center gap-2"
             >
-              <span>{authMode === "login" ? "Đăng nhập ngay" : "Tạo tài khoản"}</span>
-              <Sparkles className="w-4 h-4" />
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Đang xử lý...</span>
+                </>
+              ) : (
+                <>
+                  <span>{authMode === "login" ? "Đăng nhập ngay" : "Tạo tài khoản"}</span>
+                  <Sparkles className="w-4 h-4 text-indigo-200" />
+                </>
+              )}
             </button>
           </form>
-    </div>
-  </div>
+        </div>
+      </div>
     );
   }
 
@@ -2109,7 +2242,7 @@ export default function ChatApp() {
     : allDmItems;
 
   return (
-    <div className="flex h-screen bg-[#0d1117] text-slate-200 overflow-hidden font-sans selection:bg-indigo-500 selection:text-white">
+    <div className={`flex h-screen overflow-hidden font-sans selection:bg-indigo-500 selection:text-white ${theme === "light" ? "light-mode bg-slate-50 text-slate-800" : "dark bg-[#0d1117] text-slate-200"}`}>
       {/* 1. SIDEBAR TRÁI: KÊNH NHÓM + TIN NHẮN RIÊNG 1-1 */}
       <aside className={`w-full md:w-72 bg-[#161b22] border-r border-slate-800/80 flex flex-col justify-between shrink-0 ${mobileActiveView === "chat" ? "hidden md:flex" : "flex"}`}>
         <div className="overflow-y-auto flex-1">
@@ -2277,20 +2410,10 @@ export default function ChatApp() {
 
             <div className="space-y-1">
               {filteredGroupList.length === 0 ? (
-                <div className="px-3 py-3 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center">
-                  <p className="text-[11px] text-slate-500 mb-1.5">
-                    {sidebarSearchQuery ? "Không có nhóm phù hợp" : "Chưa tham gia nhóm nào"}
+                <div className="py-2.5 px-3 text-center">
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    {sidebarSearchQuery ? "Không có nhóm phù hợp" : "Chưa có nhóm nào"}
                   </p>
-                  {!sidebarSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={handleOpenCreateGroup}
-                      className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>Tạo nhóm ngay</span>
-                    </button>
-                  )}
                 </div>
               ) : (
                 filteredGroupList.map((group) => {
@@ -2356,21 +2479,11 @@ export default function ChatApp() {
 
             <div className="space-y-1">
               {filteredDmItems.length === 0 ? (
-                <div className="px-3 py-4 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center">
-                  <p className="text-[11px] text-slate-500 mb-2">
-                    {sidebarSearchQuery ? "Không tìm thấy người phù hợp" : "Chưa có cuộc trò chuyện riêng nào."}
+                <div className="py-2.5 px-3 text-center">
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    {sidebarSearchQuery ? "Không tìm thấy người phù hợp" : "Chưa có cuộc trò chuyện"}
                   </p>
-                  {!sidebarSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setShowSearchFriendModal(true)}
-                      className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer"
-                    >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      <span>Tìm bạn qua Số điện thoại</span>
-                    </button>
-                  )}
-            </div>
+                </div>
               ) : (
                 filteredDmItems.map((item) => {
                   const isActive =
@@ -2483,13 +2596,27 @@ export default function ChatApp() {
         </div>
           </button>
 
-          <button
-            onClick={handleLogout}
-            className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 transition shrink-0 cursor-pointer"
-            title="Đăng xuất"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={`p-2 rounded-xl transition cursor-pointer border ${
+                theme === "light"
+                  ? "bg-slate-200 text-amber-600 border-slate-300 hover:bg-slate-300"
+                  : "text-slate-400 hover:text-amber-400 hover:bg-slate-800/80 border-transparent"
+              }`}
+              title={theme === "dark" ? "Chuyển sang giao diện Sáng" : "Chuyển sang giao diện Tối"}
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-600" />}
+            </button>
+            <button
+              onClick={handleLogout}
+              className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 transition shrink-0 cursor-pointer"
+              title="Đăng xuất"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
     </div>
       </aside>
 
@@ -2912,7 +3039,19 @@ export default function ChatApp() {
               />
             </div>
 
-            <div className="flex items-center gap-1 text-slate-400 border-l border-slate-800 pl-3">
+            <div className="flex items-center gap-1.5 text-slate-400 border-l border-slate-800 pl-3">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className={`p-2 rounded-xl transition cursor-pointer border ${
+                  theme === "light"
+                    ? "bg-slate-100 text-amber-600 border-slate-200 hover:bg-slate-200"
+                    : "bg-slate-900/60 text-slate-400 hover:text-amber-400 hover:bg-slate-800 border-slate-800 hover:border-slate-700"
+                }`}
+                title={theme === "dark" ? "Chuyển sang giao diện Sáng" : "Chuyển sang giao diện Tối"}
+              >
+                {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-400" />}
+              </button>
               <button className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition" title="Cuộc gọi thoại (Demo)">
                 <Phone className="w-4 h-4" />
               </button>
@@ -3058,25 +3197,31 @@ export default function ChatApp() {
         {/* Danh sách tin nhắn */}
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
           {filteredMessages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
-              <div className="w-16 h-16 rounded-2xl bg-slate-800/40 border border-slate-800 flex items-center justify-center mb-3">
-                {activeTab === "channel" ? (
-                  <span className="text-2xl">{activeChannelObj.icon}</span>
-                ) : (
-                  <MessageCircle className="w-8 h-8 text-indigo-400" />
-                )}
-          </div>
-              <h3 className="font-semibold text-slate-300 text-sm">
-                {activeTab === "channel"
-                  ? `Chào mừng đến với ${activeChannelObj.name}!`
-                  : `Đoạn chat riêng với ${dmTargetUser}`}
-              </h3>
-              <p className="text-xs text-slate-500 mt-1 max-w-sm text-center">
-                {activeTab === "channel"
-                  ? "Đây là khởi đầu của cuộc trò chuyện. Hãy gửi lời chào đầu tiên tới mọi người!"
-                  : `Chỉ bạn và ${dmTargetUser} mới thấy được các tin nhắn trong cuộc trò chuyện riêng tư này.`}
-              </p>
-        </div>
+            <div className="flex flex-col items-center justify-center h-full px-4">
+              <div className={`rounded-3xl p-6 sm:p-8 max-w-sm text-center transition-all duration-200 animate-in fade-in zoom-in-95 ${
+                theme === "light"
+                  ? "bg-white border border-slate-200/90 shadow-md shadow-slate-200/50"
+                  : "bg-slate-900/60 border border-slate-800/80 shadow-inner"
+              }`}>
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 to-indigo-600 text-white flex items-center justify-center mx-auto mb-4 shadow-md shadow-indigo-500/25">
+                  {activeTab === "channel" ? (
+                    <span className="text-3xl">{activeChannelObj.icon}</span>
+                  ) : (
+                    <MessageCircle className="w-8 h-8 text-white" />
+                  )}
+                </div>
+                <h3 className={`font-bold text-base mb-1.5 ${theme === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                  {activeTab === "channel"
+                    ? `Chào mừng đến với ${activeChannelObj.name}!`
+                    : `Đoạn chat riêng với ${dmTargetUser}`}
+                </h3>
+                <p className={`text-xs leading-relaxed ${theme === "light" ? "text-slate-500" : "text-slate-400"}`}>
+                  {activeTab === "channel"
+                    ? "Đây là khởi đầu của cuộc trò chuyện. Hãy gửi lời chào đầu tiên tới mọi người!"
+                    : `Chỉ bạn và ${dmTargetUser} mới thấy được các tin nhắn trong cuộc trò chuyện riêng tư này.`}
+                </p>
+              </div>
+            </div>
           ) : (
             filteredMessages.map((msg, index) => {
               const isSystem =
