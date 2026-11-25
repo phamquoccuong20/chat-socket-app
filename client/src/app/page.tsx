@@ -1927,29 +1927,80 @@ export default function ChatApp() {
         memberCount: 0,
       };
 
-  const otherOnlineUsers = onlineUsers.filter((u) => u !== username);
+  const normalizeKey = (str?: string | null) => (str || "").trim().toLowerCase();
+  const currentMyUsername = normalizeKey(userProfile?.username || username);
+  const currentMyDisplay = normalizeKey(userProfile?.displayName || username);
 
-  // Danh sách các cuộc trò chuyện riêng: kết hợp từ database + người online + tìm kiếm
+  const otherOnlineUsers = onlineUsers.filter((u) => {
+    const norm = normalizeKey(u);
+    return norm !== currentMyUsername && norm !== currentMyDisplay;
+  });
+
+  // Danh sách các cuộc trò chuyện riêng: kết hợp từ database + người online + tìm kiếm (Đã chống trùng lặp tuyệt đối)
   const dmMap = new Map<string, any>();
+
+  const isSameUser = (existing: any, targetName: string) => {
+    if (!targetName) return false;
+    const t = normalizeKey(targetName);
+    return (
+      normalizeKey(existing.username) === t ||
+      normalizeKey(existing.displayName) === t ||
+      normalizeKey(existing.name) === t
+    );
+  };
+
+  const findExistingKey = (targetName: string) => {
+    for (const [key, item] of dmMap.entries()) {
+      if (isSameUser(item, targetName)) return key;
+    }
+    return null;
+  };
 
   // (A) Nạp các cuộc trò chuyện đã lưu trong Database (kể cả khi đối phương đang Offline vẫn hiện)
   for (const conv of conversations) {
-    const contactKey = conv.contactUser?.displayName || conv.contactUser?.username || conv.contactName;
-    dmMap.set(contactKey, {
-      name: contactKey,
-      displayName: conv.contactUser?.displayName || conv.contactName,
-      username: conv.contactUser?.username || conv.contactName,
-      avatarUrl: conv.contactUser?.avatarUrl,
-      roomId: conv.roomId,
-      lastMessage: conv.lastMessage,
-      lastTime: conv.lastTime,
-    });
+    const contactDisplayName = conv.contactUser?.displayName || conv.contactName;
+    const contactUsername = conv.contactUser?.username || conv.contactName;
+    const normUser = normalizeKey(contactUsername);
+    const normDisplay = normalizeKey(contactDisplayName);
+
+    if (normUser === currentMyUsername || normDisplay === currentMyDisplay) {
+      continue;
+    }
+
+    const existingKey = findExistingKey(contactUsername) || findExistingKey(contactDisplayName);
+    if (!existingKey) {
+      const primaryKey = normUser || normDisplay;
+      dmMap.set(primaryKey, {
+        name: contactDisplayName,
+        displayName: contactDisplayName,
+        username: contactUsername,
+        avatarUrl: conv.contactUser?.avatarUrl,
+        roomId: conv.roomId,
+        lastMessage: conv.lastMessage,
+        lastTime: conv.lastTime,
+      });
+    } else {
+      const existing = dmMap.get(existingKey);
+      if (conv.lastMessage) {
+        existing.lastMessage = conv.lastMessage;
+        existing.lastTime = conv.lastTime;
+      }
+      if (conv.contactUser?.displayName) {
+        existing.displayName = conv.contactUser.displayName;
+        existing.name = conv.contactUser.displayName;
+      }
+      if (conv.contactUser?.avatarUrl) {
+        existing.avatarUrl = conv.contactUser.avatarUrl;
+      }
+    }
   }
 
   // (B) Nạp thêm những người đang online cùng thời điểm (nếu chưa từng chat trước đó)
   for (const onlineUser of otherOnlineUsers) {
-    if (!dmMap.has(onlineUser)) {
-      dmMap.set(onlineUser, {
+    const existingKey = findExistingKey(onlineUser);
+    if (!existingKey) {
+      const normKey = normalizeKey(onlineUser);
+      dmMap.set(normKey, {
         name: onlineUser,
         displayName: onlineUser,
         username: onlineUser,
@@ -1962,14 +2013,17 @@ export default function ChatApp() {
 
   // (C) Nạp thêm những người vừa tìm kiếm qua thanh Search
   for (const contact of savedContacts) {
-    const contactKey = contact.displayName || contact.username;
-    if (!dmMap.has(contactKey)) {
-      dmMap.set(contactKey, {
-        name: contactKey,
-        displayName: contact.displayName || contact.username,
-        username: contact.username || contactKey,
+    const contactDisplayName = contact.displayName || contact.username;
+    const contactUsername = contact.username || contactDisplayName;
+    const existingKey = findExistingKey(contactUsername) || findExistingKey(contactDisplayName);
+    if (!existingKey) {
+      const normKey = normalizeKey(contactUsername || contactDisplayName);
+      dmMap.set(normKey, {
+        name: contactDisplayName,
+        displayName: contactDisplayName,
+        username: contactUsername,
         avatarUrl: contact.avatarUrl,
-        roomId: getDmRoomId(userProfile?.username || username, contact.username || contactKey),
+        roomId: getDmRoomId(userProfile?.username || username, contactUsername),
         lastMessage: null,
       });
     }
@@ -2323,8 +2377,14 @@ export default function ChatApp() {
                     activeTab === "dm" &&
                     (dmTargetUser === item.name || currentRoom === item.roomId);
                   const isUserOnline =
-                    onlineUsers.includes(item.name) ||
-                    onlineUsers.includes(item.displayName);
+                    onlineUsers.some((u) => {
+                      const nu = normalizeKey(u);
+                      return (
+                        nu === normalizeKey(item.username) ||
+                        nu === normalizeKey(item.displayName) ||
+                        nu === normalizeKey(item.name)
+                      );
+                    });
                   const unreadCount = unreadDMs[item.name] || 0;
 
                   return (

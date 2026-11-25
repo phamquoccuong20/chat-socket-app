@@ -315,10 +315,11 @@ export class AuthService {
     // Bước 4: Lấy đầy đủ thông tin (Tên hiển thị, Avatar, SĐT) của người chat cùng để trả về Frontend
     const conversations = [];
     for (const item of conversationMap.values()) {
-      const contact = await this.prisma.user.findFirst({
+      let contact = await this.prisma.user.findFirst({
         where: {
           OR: [
             { username: item.contactName.toLowerCase() },
+            { username: item.contactName },
             { displayName: item.contactName },
           ],
         },
@@ -330,6 +331,25 @@ export class AuthService {
           avatarUrl: true,
         },
       });
+
+      // Nếu không tìm thấy bằng so sánh thông thường, tìm kiếm đối chiếu không phân biệt hoa thường
+      if (!contact) {
+        const allUsers = await this.prisma.user.findMany({
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            phone: true,
+            avatarUrl: true,
+          },
+        });
+        contact =
+          allUsers.find(
+            (u) =>
+              u.username.toLowerCase() === item.contactName.toLowerCase() ||
+              u.displayName.toLowerCase() === item.contactName.toLowerCase(),
+          ) || null;
+      }
 
       conversations.push({
         ...item,
