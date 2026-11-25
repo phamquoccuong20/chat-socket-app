@@ -240,6 +240,33 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('reactMessage')
+  async handleReactMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { messageId: string; roomId: string; emoji: string; username: string },
+  ) {
+    try {
+      const reactions = await this.chatService.reactToMessage(
+        payload.messageId,
+        payload.emoji,
+        payload.username,
+      );
+
+      // Thông báo cập nhật cảm xúc tin nhắn tới toàn bộ thành viên trong phòng chat
+      this.server.to(payload.roomId).emit('messageReactionUpdated', {
+        messageId: payload.messageId,
+        roomId: payload.roomId,
+        reactions,
+      });
+
+      console.log(`[Reaction] ${payload.username} thả ${payload.emoji} vào tin nhắn ${payload.messageId}`);
+      return { success: true, reactions };
+    } catch (err: any) {
+      console.error(`[Reaction Error]: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
   // Thông báo tới các thành viên khi nhóm mới được tạo
   notifyGroupCreated(group: any, memberUsernames: string[]) {
     for (const u of memberUsernames) {

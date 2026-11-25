@@ -5,10 +5,57 @@ import * as path from 'path';
 
 @Injectable()
 export class ChatService implements OnModuleInit {
+  private messageReactions = new Map<string, Record<string, string[]>>();
+
   constructor(private prisma: PrismaService) {}
 
   async onModuleInit() {
     console.log('[DB] ChatService initialized with Prisma ORM');
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "reactions" TEXT DEFAULT '{}'`,
+      );
+    } catch (err: any) {
+      console.log('[DB] Note: Could not auto-alter reactions column (using in-memory fallback):', err.message);
+    }
+  }
+
+  // Thả / gỡ biểu cảm cảm xúc (Reactions) cho tin nhắn
+  async reactToMessage(messageId: string, emoji: string, username: string): Promise<Record<string, string[]>> {
+    let current = this.messageReactions.get(messageId) || {};
+    let users = current[emoji] || [];
+
+    if (users.includes(username)) {
+      // Hủy cảm xúc nếu đã thả rồi (toggle unlike)
+      users = users.filter((u) => u !== username);
+      if (users.length === 0) {
+        delete current[emoji];
+      } else {
+        current[emoji] = users;
+      }
+    } else {
+      // Thêm cảm xúc mới
+      current[emoji] = [...users, username];
+    }
+
+    this.messageReactions.set(messageId, current);
+
+    // Lưu vào Database nếu bảng có cột reactions
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE "messages" SET "reactions" = $1 WHERE "id" = $2`,
+        JSON.stringify(current),
+        messageId,
+      );
+    } catch {
+      // Bỏ qua nếu cột chưa được hỗ trợ
+    }
+
+    return current;
+  }
+
+  getReactions(messageId: string): Record<string, string[]> {
+    return this.messageReactions.get(messageId) || {};
   }
 
   // Tạo hoặc lấy User từ database
@@ -173,6 +220,7 @@ export class ChatService implements OnModuleInit {
         replyToContent: m.replyToContent || null,
         isRevoked: Boolean(m.isRevoked),
         isPinned: Boolean(m.isPinned),
+        reactions: this.getReactions(m.id),
         createdAt: new Date(m.createdAt).toISOString().replace('Z', '+07:00'),
       };
     });

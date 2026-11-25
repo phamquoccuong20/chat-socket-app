@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { io, Socket } from "socket.io-client";
 import {
   Send,
@@ -75,6 +75,7 @@ interface Message {
   isSystem?: boolean;
   isRevoked?: boolean;
   isPinned?: boolean;
+  reactions?: Record<string, string[]>;
 }
 
 const DEFAULT_ROOMS = [
@@ -218,6 +219,15 @@ export default function ChatApp() {
     targetName?: string;
   } | null>(null);
   const [isProcessingAction, setIsProcessingAction] = useState(false);
+
+  // Tính năng Gắn thẻ / Tag tên thành viên (@mentions)
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionStartIndex, setMentionStartIndex] = useState(-1);
+  const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
+
+  // Tính năng Thả cảm xúc / Like tin nhắn (Reactions)
+  const [activeReactionMessageId, setActiveReactionMessageId] = useState<string | null>(null);
 
   // Tải danh sách nhóm chat của user từ SQL Server
   const loadUserGroups = async (targetUser: string) => {
@@ -542,6 +552,19 @@ export default function ChatApp() {
       }
     );
 
+    socketInstance.on(
+      "messageReactionUpdated",
+      (data: { messageId: string; roomId: string; reactions: Record<string, string[]> }) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === data.messageId
+              ? { ...m, reactions: data.reactions }
+              : m
+          )
+        );
+      }
+    );
+
     socketInstance.on("groupCreated", (group: any) => {
       setGroupList((prev) => {
         if (prev.some((g) => g.id === group.id)) return prev;
@@ -662,21 +685,39 @@ export default function ChatApp() {
     }
   }, [socket, isConnected, username, userProfile]);
 
-  // Đóng menu 3 chấm, danh sách ghim hoặc menu (+) khi bấm ra ngoài màn hình
+  // Đóng menu 3 chấm, reaction bar, danh sách ghim hoặc menu (+) khi bấm ra ngoài màn hình
   useEffect(() => {
     const handleClickOutside = () => {
       setActiveMenuMessageId(null);
+      setActiveReactionMessageId(null);
       setShowPinnedDropdown(false);
       setShowRoomMenu(false);
       setShowSidebarQuickMenu(false);
+      setShowMentionSuggestions(false);
     };
-    if (activeMenuMessageId || showPinnedDropdown || showRoomMenu || showSidebarQuickMenu) {
+    if (activeMenuMessageId || activeReactionMessageId || showPinnedDropdown || showRoomMenu || showSidebarQuickMenu) {
       document.addEventListener("click", handleClickOutside);
     }
     return () => {
       document.removeEventListener("click", handleClickOutside);
     };
-  }, [activeMenuMessageId, showPinnedDropdown, showRoomMenu, showSidebarQuickMenu]);
+  }, [activeMenuMessageId, activeReactionMessageId, showPinnedDropdown, showRoomMenu, showSidebarQuickMenu]);
+
+  // Tự động tải danh sách thành viên khi vào phòng nhóm (phục vụ tính năng tag tên @mentions)
+  useEffect(() => {
+    if (!currentRoom) return;
+    const isGrp = groupList.some((g) => g.id === currentRoom);
+    if (isGrp) {
+      fetch(`${BACKEND_URL}/chat/groups/${encodeURIComponent(currentRoom)}/members`)
+        .then((res) => (res.ok ? res.json() : []))
+        .then((members) => {
+          if (Array.isArray(members)) {
+            setCurrentGroupMembers(members);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [currentRoom, groupList]);
 
   // Kiểm tra độ phức tạp của mật khẩu: ít nhất 6 ký tự, 1 chữ hoa, 1 chữ thường, 1 ký tự đặc biệt
   const validatePasswordComplexity = (password: string): string | null => {
@@ -1421,6 +1462,41 @@ export default function ChatApp() {
     }
   };
 
+  // Thả / Hủy cảm xúc (Like / Reaction) cho tin nhắn
+  const handleToggleReaction = (messageId: string, emoji: string) => {
+    if (!socket || !currentRoom) return;
+
+    // Cập nhật Optimistic trên giao diện ngay lập tức
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId) return m;
+        const currentReactions: Record<string, string[]> = { ...(m.reactions || {}) };
+        let users: string[] = [...(currentReactions[emoji] || [])];
+
+        if (users.includes(username)) {
+          users = users.filter((u) => u !== username);
+          if (users.length === 0) {
+            delete currentReactions[emoji];
+          } else {
+            currentReactions[emoji] = users;
+          }
+        } else {
+          currentReactions[emoji] = [...users, username];
+        }
+
+        return { ...m, reactions: currentReactions };
+      })
+    );
+
+    // Gửi sự kiện qua socket
+    socket.emit("reactMessage", {
+      messageId,
+      roomId: currentRoom,
+      emoji,
+      username,
+    });
+  };
+
   // Kiểm tra file có phải hình ảnh không
   const isImageFile = (fileType?: string | null, fileName?: string | null) => {
     if (fileType && fileType.startsWith("image/")) return true;
@@ -1593,7 +1669,24 @@ export default function ChatApp() {
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputMessage(e.target.value);
+    const val = e.target.value;
+    setInputMessage(val);
+
+    // Phát hiện ký tự @ để kích hoạt gợi ý tag tên thành viên
+    const cursor = e.target.selectionStart || val.length;
+    const textBeforeCursor = val.slice(0, cursor);
+    const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
+
+    if (match) {
+      const query = match[1];
+      setShowMentionSuggestions(true);
+      setMentionQuery(query);
+      setMentionStartIndex(textBeforeCursor.lastIndexOf("@"));
+      setSelectedMentionIndex(0);
+    } else {
+      setShowMentionSuggestions(false);
+    }
+
     if (!socket) return;
 
     socket.emit("typing", {
@@ -1610,6 +1703,156 @@ export default function ChatApp() {
         isTyping: false,
       });
     }, 1200);
+  };
+
+  // Danh sách gợi ý khi gõ @
+  const mentionCandidates = useMemo(() => {
+    if (!showMentionSuggestions) return [];
+    const q = mentionQuery.toLowerCase().trim();
+
+    const list: {
+      id: string;
+      name: string;
+      username?: string;
+      sub?: string;
+      avatarUrl?: string | null;
+      isAll?: boolean;
+    }[] = [];
+
+    // 1. Gợi ý @all (nhắc tất cả mọi người)
+    if (!q || "all".includes(q) || "tat ca".includes(q) || "tất cả".includes(q) || "mọi người".includes(q)) {
+      list.push({
+        id: "mention-all",
+        name: "all",
+        sub: "Nhắc tất cả mọi người trong phòng",
+        isAll: true,
+      });
+    }
+
+    // 2. Thu thập danh sách thành viên trong nhóm / bạn bè / online
+    const pool = new Map<string, { id: string; name: string; username?: string; sub?: string; avatarUrl?: string | null }>();
+
+    if (currentGroupMembers && currentGroupMembers.length > 0) {
+      currentGroupMembers.forEach((m) => {
+        const dName = m.displayName || m.username;
+        const uName = m.username;
+        if (uName && uName !== username && uName !== userProfile?.username) {
+          pool.set(uName, {
+            id: m.id || uName,
+            name: dName,
+            username: uName,
+            sub: `@${uName}`,
+            avatarUrl: m.avatarUrl,
+          });
+        }
+      });
+    }
+
+    savedContacts.forEach((c) => {
+      const dName = c.displayName || c.username;
+      const uName = c.username;
+      if (uName && uName !== username && uName !== userProfile?.username && !pool.has(uName)) {
+        pool.set(uName, {
+          id: c.id || uName,
+          name: dName,
+          username: uName,
+          sub: `@${uName}`,
+          avatarUrl: c.avatarUrl,
+        });
+      }
+    });
+
+    onlineUsers.forEach((u) => {
+      if (u && u !== username && u !== userProfile?.username && !pool.has(u)) {
+        pool.set(u, {
+          id: u,
+          name: u,
+          username: u,
+          sub: "Đang online",
+        });
+      }
+    });
+
+    Array.from(pool.values()).forEach((item) => {
+      const matchName = item.name.toLowerCase().includes(q);
+      const matchUser = item.username ? item.username.toLowerCase().includes(q) : false;
+      if (!q || matchName || matchUser) {
+        list.push(item);
+      }
+    });
+
+    return list.slice(0, 8);
+  }, [showMentionSuggestions, mentionQuery, currentGroupMembers, savedContacts, onlineUsers, username, userProfile]);
+
+  // Chọn thành viên được tag
+  const handleSelectMention = (target: { name: string; username?: string; isAll?: boolean }) => {
+    const cursor = messageInputRef.current?.selectionStart || inputMessage.length;
+    const beforeAt = inputMessage.slice(0, mentionStartIndex);
+    const afterCursor = inputMessage.slice(cursor);
+    const tagText = target.isAll
+      ? "@all "
+      : `@${(target.username || target.name).replace(/\s+/g, "_")} `;
+    const nextVal = `${beforeAt}${tagText}${afterCursor}`;
+    setInputMessage(nextVal);
+    setShowMentionSuggestions(false);
+
+    setTimeout(() => {
+      if (messageInputRef.current) {
+        const newPos = beforeAt.length + tagText.length;
+        messageInputRef.current.focus();
+        messageInputRef.current.setSelectionRange(newPos, newPos);
+      }
+    }, 10);
+  };
+
+  // Render nội dung tin nhắn có gắn thẻ @mention
+  const renderMessageContentWithMentions = (content: string, isMeMsg: boolean) => {
+    if (!content) return null;
+
+    const mentionRegex = /(@all\b|@tatca\b|@[\p{L}\p{N}_-]+)/gu;
+    const parts = content.split(mentionRegex);
+
+    if (parts.length === 1) {
+      return <span>{content}</span>;
+    }
+
+    const myUser = (username || "").toLowerCase();
+    const myDisplay = (userProfile?.displayName || "").toLowerCase().replace(/\s+/g, "_");
+
+    return (
+      <span>
+        {parts.map((part, idx) => {
+          if (!part) return null;
+          if (part.startsWith("@")) {
+            const raw = part.slice(1).toLowerCase();
+            const isMentioningMe =
+              raw === "all" ||
+              raw === "tatca" ||
+              raw === myUser ||
+              raw === myDisplay;
+
+            return (
+              <span
+                key={idx}
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 rounded-md font-semibold text-xs transition select-none ${
+                  isMentioningMe
+                    ? isMeMsg
+                      ? "bg-white/30 text-white underline decoration-amber-300 font-bold"
+                      : "bg-amber-500/25 text-amber-500 dark:text-amber-300 border border-amber-500/30 font-bold"
+                    : isMeMsg
+                    ? "bg-black/25 text-indigo-100"
+                    : "bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 border border-indigo-500/25"
+                }`}
+                title={isMentioningMe ? "Nhắc đến bạn" : "Thẻ nhắc tên"}
+              >
+                {part}
+              </span>
+            );
+          }
+          return <span key={idx}>{part}</span>;
+        })}
+      </span>
+    );
   };
 
   const getAvatarGradient = (name: string) => {
@@ -3300,13 +3543,25 @@ export default function ChatApp() {
 
               const isSameSenderAsPrev = prevMsg && !isPrevSystem && prevMsg.sender === msg.sender;
 
+              const myUserLower = (username || "").toLowerCase();
+              const myDisplayLower = (userProfile?.displayName || "").toLowerCase().replace(/\s+/g, "_");
+              const isMentioningMe =
+                !isMe &&
+                Boolean(msg.content) &&
+                (msg.content.includes("@all") ||
+                  msg.content.includes("@tatca") ||
+                  (Boolean(myUserLower) && msg.content.toLowerCase().includes(`@${myUserLower}`)) ||
+                  (Boolean(myDisplayLower) && msg.content.toLowerCase().includes(`@${myDisplayLower}`)));
+
               return (
                 <div
                   key={msg.id}
                   id={`msg-${msg.id}`}
                   className={`flex items-start gap-3 group transition-all duration-300 p-1.5 rounded-2xl ${
                     isMe ? "flex-row-reverse" : "flex-row"
-                  } ${isSameSenderAsPrev ? "mt-0.5" : "mt-3"}`}
+                  } ${isSameSenderAsPrev ? "mt-0.5" : "mt-3"} ${
+                    isMentioningMe ? "bg-amber-500/10 border-l-4 border-amber-400 pl-2.5 rounded-r-2xl" : ""
+                  }`}
                 >
                   {!isSameSenderAsPrev ? (
                     <div
@@ -3326,6 +3581,11 @@ export default function ChatApp() {
                         <span className="text-xs font-semibold text-slate-300">
                           {isMe ? "Bạn" : msg.sender}
                         </span>
+                        {isMentioningMe && (
+                          <span className="text-[10px] font-bold text-amber-500 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.2 rounded-md flex items-center gap-1 shadow-2xs">
+                            <span>🔔</span> Đã nhắc đến bạn
+                          </span>
+                        )}
                         <span className="text-[10px] text-slate-500">
                           {new Date(msg.createdAt).toLocaleTimeString([], {
                             hour: "2-digit",
@@ -3336,9 +3596,58 @@ export default function ChatApp() {
                     )}
 
                     <div className={`flex items-center gap-1.5 ${isMe ? "flex-row" : "flex-row-reverse"}`}>
-                      {/* Thao tác tin nhắn: Nút Trả lời nhanh & Menu 3 chấm */}
+                      {/* Thao tác tin nhắn: Nút Thả cảm xúc, Trả lời nhanh & Menu 3 chấm */}
                       {!msg.isRevoked && (
                         <div className={`flex items-center gap-1 ${isMe ? "flex-row" : "flex-row-reverse"}`}>
+                          {/* Nút Thả biểu cảm cảm xúc (Reactions) */}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveReactionMessageId((prev) => (prev === msg.id ? null : msg.id));
+                              }}
+                              className={`p-1.5 rounded-lg border border-slate-800 bg-slate-900/90 text-slate-400 hover:text-amber-400 hover:bg-slate-800 cursor-pointer shadow-sm transition ${
+                                activeReactionMessageId === msg.id
+                                  ? "opacity-100 text-amber-400 bg-slate-800"
+                                  : "opacity-0 group-hover:opacity-100"
+                              }`}
+                              title="Thả cảm xúc"
+                            >
+                              <Smile className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Bảng icon cảm xúc thả nhanh */}
+                            {activeReactionMessageId === msg.id && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className={`absolute bottom-full mb-1.5 ${
+                                  isMe ? "right-0" : "left-0"
+                                } bg-[#161b22] border border-slate-700/80 rounded-2xl p-1 shadow-2xl flex items-center gap-1 z-30 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100`}
+                              >
+                                {["👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👏"].map((emoji) => {
+                                  const hasReacted = Boolean(msg.reactions?.[emoji]?.includes(username));
+                                  return (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => {
+                                        handleToggleReaction(msg.id, emoji);
+                                        setActiveReactionMessageId(null);
+                                      }}
+                                      className={`text-lg p-1.5 rounded-xl transition cursor-pointer hover:scale-125 ${
+                                        hasReacted ? "bg-indigo-500/25 scale-110" : "hover:bg-slate-800/80"
+                                      }`}
+                                      title={`Thả ${emoji}`}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
                           {/* Nút Trả lời nhanh */}
                           <button
                             type="button"
@@ -3542,12 +3851,40 @@ export default function ChatApp() {
                           {/* 3. Nội dung văn bản (nếu có) */}
                           {msg.content && (
                             <div className={msg.fileUrl ? "mt-1.5 px-2 pb-0.5" : ""}>
-                              {msg.content}
+                              {renderMessageContentWithMentions(msg.content, isMe)}
                             </div>
                           )}
                         </div>
                       )}
                     </div>
+
+                    {/* Hiển thị các cảm xúc (Reactions) đã thả dưới chân tin nhắn */}
+                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? "justify-end" : "justify-start"}`}>
+                        {Object.entries(msg.reactions).map(([emoji, users]) => {
+                          if (!Array.isArray(users) || users.length === 0) return null;
+                          const isMyReaction = users.includes(username);
+                          const userListStr = users.join(", ");
+
+                          return (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => handleToggleReaction(msg.id, emoji)}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition cursor-pointer border ${
+                                isMyReaction
+                                  ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-400 font-semibold shadow-xs"
+                                  : "bg-slate-800/70 border-slate-700/60 text-slate-300 hover:bg-slate-700"
+                              }`}
+                              title={`${userListStr} đã thả ${emoji}`}
+                            >
+                              <span className="text-sm leading-none">{emoji}</span>
+                              <span className="text-[10px] font-medium">{users.length}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -3623,6 +3960,71 @@ export default function ChatApp() {
               </div>
             )}
 
+            {/* Popup gợi ý tag tên khi gõ @ */}
+            {showMentionSuggestions && mentionCandidates.length > 0 && (
+              <div className="absolute bottom-full mb-2 left-0 right-0 sm:right-auto sm:w-80 bg-[#161b22] border border-slate-700/90 rounded-2xl p-1.5 shadow-2xl z-30 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-150 max-h-64 overflow-y-auto">
+                <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 flex items-center justify-between">
+                  <span>Gợi ý nhắc tên (@)</span>
+                  <span className="text-[9px] text-slate-500 font-normal">Dùng ↑ ↓ và Enter</span>
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {mentionCandidates.map((cand: any, idx: number) => {
+                    const isSelected = idx === selectedMentionIndex;
+                    return (
+                      <button
+                        key={cand.id}
+                        type="button"
+                        onClick={() => handleSelectMention(cand)}
+                        onMouseEnter={() => setSelectedMentionIndex(idx)}
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition cursor-pointer ${
+                          isSelected
+                            ? "bg-indigo-600 text-white font-medium"
+                            : "text-slate-300 hover:bg-slate-800/80"
+                        }`}
+                      >
+                        {cand.isAll ? (
+                          <div
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold ${
+                              isSelected ? "bg-white/20 text-white" : "bg-indigo-500/20 text-indigo-400"
+                            }`}
+                          >
+                            📢
+                          </div>
+                        ) : (
+                          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-[10px] shadow-sm shrink-0 overflow-hidden">
+                            {renderAvatarContent(cand.avatarUrl, cand.name, "sm")}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs truncate font-medium flex items-center gap-1.5">
+                            <span>{cand.isAll ? "@all" : cand.name}</span>
+                            {cand.isAll && (
+                              <span
+                                className={`text-[9px] px-1.5 py-0.2 rounded-full ${
+                                  isSelected ? "bg-white/20 text-white" : "bg-indigo-500/20 text-indigo-300"
+                                }`}
+                              >
+                                Tất cả
+                              </span>
+                            )}
+                          </div>
+                          {cand.sub && (
+                            <div
+                              className={`text-[10px] truncate ${
+                                isSelected ? "text-indigo-100" : "text-slate-500"
+                              }`}
+                            >
+                              {cand.sub}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <form onSubmit={handleSendMessage} className="flex items-center gap-2">
               <div className="flex-1 flex items-center bg-[#0d1117] border border-slate-800/90 rounded-2xl px-3 py-1.5 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 transition duration-200">
                 <input
@@ -3651,6 +4053,28 @@ export default function ChatApp() {
                   value={inputMessage}
                   onChange={handleInputChange}
                   onKeyDown={(e) => {
+                    if (showMentionSuggestions && mentionCandidates.length > 0) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setSelectedMentionIndex((prev) => (prev + 1) % mentionCandidates.length);
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setSelectedMentionIndex((prev) => (prev - 1 + mentionCandidates.length) % mentionCandidates.length);
+                        return;
+                      }
+                      if (e.key === "Enter" || e.key === "Tab") {
+                        e.preventDefault();
+                        handleSelectMention(mentionCandidates[selectedMentionIndex]);
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setShowMentionSuggestions(false);
+                        return;
+                      }
+                    }
                     if (e.key === "Escape" && replyingMessage) {
                       setReplyingMessage(null);
                     }
@@ -3659,7 +4083,7 @@ export default function ChatApp() {
                     replyingMessage
                       ? `Trả lời ${replyingMessage.sender}...`
                       : activeTab === "channel"
-                      ? `Nhắn tin trong #${activeChannelObj.name}...`
+                      ? `Nhắn tin trong #${activeChannelObj.name}... (Gõ @ để tag tên)`
                       : `Nhắn tin riêng cho ${dmTargetUser}...`
                   }
                   className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none"
