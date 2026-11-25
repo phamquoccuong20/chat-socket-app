@@ -52,6 +52,7 @@ import {
   Image as ImageIcon,
   Reply,
   Crown,
+  UserMinus,
   Sun,
   Moon,
 } from "lucide-react";
@@ -129,6 +130,8 @@ export default function ChatApp() {
   const [confirmNewPwd, setConfirmNewPwd] = useState("");
   const [profileAlert, setProfileAlert] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const profileBackdropMouseDownRef = useRef(false);
+  const [failedAvatarUrls, setFailedAvatarUrls] = useState<Set<string>>(new Set());
 
   // Rooms & Online users
   const [roomList, setRoomList] = useState(DEFAULT_ROOMS);
@@ -211,10 +214,10 @@ export default function ChatApp() {
   const [isUploadingGroupAvatar, setIsUploadingGroupAvatar] = useState(false);
   const editGroupAvatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Modal xác nhận thao tác (Xóa nhóm, Rời nhóm, Xóa cuộc trò chuyện, Chuyển quyền trưởng nhóm)
+  // Modal xác nhận thao tác (Xóa nhóm, Rời nhóm, Xóa cuộc trò chuyện, Chuyển quyền trưởng nhóm, Xóa thành viên)
   const [actionModal, setActionModal] = useState<{
     isOpen: boolean;
-    type: "deleteGroup" | "leaveGroup" | "deleteConversation" | "transferLeader";
+    type: "deleteGroup" | "leaveGroup" | "deleteConversation" | "transferLeader" | "kickMember";
     targetId: string;
     targetName?: string;
   } | null>(null);
@@ -440,7 +443,15 @@ export default function ChatApp() {
     socketInstance.on("roomHistory", (data: { roomId: string; messages: Message[] }) => {
       // Chỉ nạp tin nhắn nếu lịch sử trả về đúng phòng đang mở hiện tại
       if (data.roomId === currentRoomRef.current) {
-        setMessages(data.messages);
+        setMessages((prev) => {
+          if (prev.length === 0) return data.messages;
+          // Merge lịch sử với tin nhắn hiện có theo ID để không bao giờ bị mất tin nhắn vừa nhận
+          const existingIds = new Set(data.messages.map((m) => m.id));
+          const unsynced = prev.filter((m) => !existingIds.has(m.id) && m.roomId === data.roomId);
+          const combined = [...data.messages, ...unsynced];
+          combined.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+          return combined;
+        });
       }
     });
 
@@ -620,6 +631,19 @@ export default function ChatApp() {
         if (usernameRef.current) {
           socketInstance.emit("joinRoom", { roomId: "general", username: usernameRef.current });
         }
+      }
+    });
+
+    socketInstance.on("kickedFromGroup", (data: { roomId: string; groupName?: string }) => {
+      setGroupList((prev) => prev.filter((g) => g.id !== data.roomId));
+      if (currentRoomRef.current === data.roomId) {
+        setCurrentRoom("general");
+        setActiveTab("channel");
+        setMessages([]);
+        if (usernameRef.current) {
+          socketInstance.emit("joinRoom", { roomId: "general", username: usernameRef.current });
+        }
+        alert(`Bạn đã bị xóa khỏi nhóm "${data.groupName || 'nhóm chat'}"!`);
       }
     });
 
@@ -1138,6 +1162,50 @@ export default function ChatApp() {
     setShowEditGroupModal(true);
   };
 
+  // Nén và chuyển đổi ảnh avatar thành Base64 Data URL (tối đa 200x200) để lưu trực tiếp vào CSDL PostgreSQL,
+  // vĩnh viễn không bao giờ bị mất khi redeploy server lên Render
+  const compressImageToBase64 = (
+    file: File,
+    maxWidth = 200,
+    maxHeight = 200,
+    quality = 0.85
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx?.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error("Lỗi khi đọc file ảnh!"));
+      };
+      reader.onerror = () => reject(new Error("Lỗi khi đọc file!"));
+    });
+  };
+
   // Upload ảnh đại diện nhóm mới
   const handleGroupAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1148,15 +1216,9 @@ export default function ChatApp() {
     }
     setIsUploadingGroupAvatar(true);
     try {
-      const formData = new FormData();
-      formData.append("avatar", file);
-      const res = await fetch(`${BACKEND_URL}/auth/upload-avatar`, {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Tải ảnh đại diện nhóm thất bại!");
-      setEditGroupAvatarUrl(data.avatarUrl);
+      // Nén ảnh sang base64 data URL để lưu vĩnh viễn trong CSDL
+      const base64Data = await compressImageToBase64(file, 200, 200, 0.85);
+      setEditGroupAvatarUrl(base64Data);
     } catch (err: any) {
       alert(err.message || "Lỗi tải ảnh đại diện nhóm!");
     } finally {
@@ -1288,6 +1350,22 @@ export default function ChatApp() {
         if (data.result?.members) {
           setCurrentGroupMembers(data.result.members);
         }
+      } else if (actionModal.type === "kickMember") {
+        if (!currentRoom) return;
+        const current = userProfile?.username || username;
+        const res = await fetch(`${BACKEND_URL}/chat/groups/${currentRoom}/kick`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetUserId: actionModal.targetId,
+            requesterUsername: current,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || data.error || "Xóa thành viên khỏi nhóm thất bại!");
+        if (data.result?.members) {
+          setCurrentGroupMembers(data.result.members);
+        }
       }
       setActionModal(null);
     } catch (err: any) {
@@ -1322,28 +1400,18 @@ export default function ChatApp() {
     setProfileAlert(null);
 
     try {
-      const formData = new FormData();
-      formData.append("avatar", file);
-
-      const res = await fetch(`${BACKEND_URL}/auth/upload-avatar`, {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || "Tải ảnh đại diện thất bại!");
-      }
-
-      setEditAvatarEmoji(data.avatarUrl);
+      // Nén ảnh sang base64 data URL (tối đa 200x200, dung lượng nhỏ ~15-25KB) để lưu trực tiếp vào CSDL PostgreSQL,
+      // vĩnh viễn không bao giờ bị mất hoặc bị 404 khi redeploy lên Render
+      const base64Data = await compressImageToBase64(file, 200, 200, 0.85);
+      setEditAvatarEmoji(base64Data);
       setProfileAlert({
         type: "success",
-        text: "Đã tải ảnh lên thành công! Bấm 'Lưu thay đổi hồ sơ' bên dưới để lưu vào hệ thống.",
+        text: "Đã chọn ảnh đại diện! Bấm 'Lưu thay đổi hồ sơ' bên dưới để lưu vĩnh viễn.",
       });
     } catch (err: any) {
       setProfileAlert({
         type: "error",
-        text: err.message || "Lỗi kết nối khi tải ảnh lên server!",
+        text: err.message || "Lỗi xử lý ảnh đại diện!",
       });
     } finally {
       setIsUploadingAvatar(false);
@@ -1879,7 +1947,7 @@ export default function ChatApp() {
     return name.slice(0, 2).toUpperCase();
   };
 
-  // Helper hiển thị avatar (hỗ trợ cả ảnh URL từ server và emoji icon)
+  // Helper hiển thị avatar (hỗ trợ cả ảnh URL từ server, base64 data URL và emoji icon)
   const renderAvatarContent = (
     avatarValue?: string | null,
     fallbackName: string = "",
@@ -1889,17 +1957,30 @@ export default function ChatApp() {
       avatarValue &&
       (avatarValue.startsWith("http://") ||
         avatarValue.startsWith("https://") ||
-        avatarValue.startsWith("/"));
-    if (isUrl) {
+        avatarValue.startsWith("/") ||
+        avatarValue.startsWith("data:image/"));
+
+    const hasFailed = avatarValue ? failedAvatarUrls.has(avatarValue) : false;
+
+    if (isUrl && !hasFailed) {
       return (
         <img
           src={avatarValue!}
-          alt={fallbackName}
+          alt=""
           className="w-full h-full object-cover"
+          onError={() => {
+            if (avatarValue) {
+              setFailedAvatarUrls((prev) => {
+                const next = new Set(prev);
+                next.add(avatarValue);
+                return next;
+              });
+            }
+          }}
         />
       );
     }
-    if (avatarValue) {
+    if (avatarValue && !isUrl) {
       return (
         <span
           className={
@@ -4457,10 +4538,22 @@ export default function ChatApp() {
       {showProfileModal && (
         <div
           className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150"
-          onClick={handleCloseProfileModal}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              profileBackdropMouseDownRef.current = true;
+            }
+          }}
+          onMouseUp={(e) => {
+            if (profileBackdropMouseDownRef.current && e.target === e.currentTarget) {
+              handleCloseProfileModal();
+            }
+            profileBackdropMouseDownRef.current = false;
+          }}
         >
           <div
             className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative my-auto max-h-[92vh] flex flex-col"
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseUp={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-5">
@@ -5220,23 +5313,41 @@ export default function ChatApp() {
                         </div>
 
                         <div className="text-right shrink-0 flex items-center gap-2">
-                          {isCurrentUserLeader && !member.isLeader && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActionModal({
-                                  isOpen: true,
-                                  type: "transferLeader",
-                                  targetId: member.id || member.username,
-                                  targetName: member.displayName || member.username,
-                                });
-                              }}
-                              className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
-                              title="Chuyển quyền trưởng nhóm cho thành viên này"
-                            >
-                              <Crown className="w-3 h-3 text-amber-400" />
-                              <span>Chuyển trưởng nhóm</span>
-                            </button>
+                          {isCurrentUserLeader && !member.isLeader && !isMe && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActionModal({
+                                    isOpen: true,
+                                    type: "transferLeader",
+                                    targetId: member.id || member.username,
+                                    targetName: member.displayName || member.username,
+                                  });
+                                }}
+                                className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                                title="Chuyển quyền trưởng nhóm cho thành viên này"
+                              >
+                                <Crown className="w-3 h-3 text-amber-400" />
+                                <span>Chuyển trưởng nhóm</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActionModal({
+                                    isOpen: true,
+                                    type: "kickMember",
+                                    targetId: member.id || member.username,
+                                    targetName: member.displayName || member.username,
+                                  });
+                                }}
+                                className="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                                title="Xóa thành viên khỏi nhóm chat"
+                              >
+                                <UserMinus className="w-3 h-3 text-rose-400" />
+                                <span>Xóa</span>
+                              </button>
+                            </>
                           )}
                           <span
                             className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
@@ -5415,6 +5526,8 @@ export default function ChatApp() {
                 <Crown className="w-6 h-6 text-amber-400" />
               ) : actionModal.type === "leaveGroup" ? (
                 <LogOut className="w-6 h-6" />
+              ) : actionModal.type === "kickMember" ? (
+                <UserMinus className="w-6 h-6 text-rose-400" />
               ) : (
                 <Trash2 className="w-6 h-6" />
               )}
@@ -5425,6 +5538,7 @@ export default function ChatApp() {
               {actionModal.type === "leaveGroup" && "Rời khỏi nhóm chat?"}
               {actionModal.type === "deleteConversation" && "Xóa cuộc trò chuyện?"}
               {actionModal.type === "transferLeader" && "Chuyển quyền trưởng nhóm?"}
+              {actionModal.type === "kickMember" && "Xóa thành viên khỏi nhóm?"}
             </h3>
 
             <p className="text-xs text-slate-400 leading-relaxed mb-6">
@@ -5446,6 +5560,11 @@ export default function ChatApp() {
               {actionModal.type === "transferLeader" && (
                 <>
                   Bạn có chắc muốn chuyển quyền Trưởng nhóm cho <strong className="text-white">"{actionModal.targetName}"</strong>? Sau khi chuyển, bạn sẽ trở thành thành viên thông thường.
+                </>
+              )}
+              {actionModal.type === "kickMember" && (
+                <>
+                  Bạn có chắc muốn xóa thành viên <strong className="text-white">"{actionModal.targetName}"</strong> khỏi nhóm chat này không?
                 </>
               )}
             </p>
@@ -5481,6 +5600,7 @@ export default function ChatApp() {
                     {actionModal.type === "leaveGroup" && "Rời nhóm"}
                     {actionModal.type === "deleteConversation" && "Xóa cuộc trò chuyện"}
                     {actionModal.type === "transferLeader" && "Xác nhận chuyển"}
+                    {actionModal.type === "kickMember" && "Xác nhận xóa"}
                   </span>
                 )}
               </button>

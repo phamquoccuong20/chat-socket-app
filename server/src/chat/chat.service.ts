@@ -177,18 +177,21 @@ export class ChatService implements OnModuleInit {
 
   /**
    * TẢI LỊCH SỬ TIN NHẮN CỦA MỘT PHÒNG:
+   * Lấy các tin nhắn mới nhất (desc) rồi đảo ngược lại (asc) để hiển thị theo đúng thứ tự thời gian
    */
-  async getRoomMessages(roomId: string, limit = 50) {
-    const rawMessages = await this.prisma.message.findMany({
+  async getRoomMessages(roomId: string, limit = 100) {
+    const raw = await this.prisma.message.findMany({
       where: { roomId },
       include: {
         sender: {
           select: { displayName: true, username: true },
         },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       take: Number(limit),
     });
+
+    const rawMessages = raw.reverse();
 
     return rawMessages.map((m) => {
       const isSystem =
@@ -880,6 +883,87 @@ export class ChatService implements OnModuleInit {
         displayName: newLeader.displayName,
       },
       systemMessage,
+      members,
+    };
+  }
+
+  /**
+   * 8. XÓA/ĐUỔI THÀNH VIÊN KHỎI NHÓM CHAT (DÀNH CHO TRƯỞNG NHÓM):
+   */
+  async removeGroupMember(roomId: string, targetUserId: string, requesterUsername: string) {
+    const requester = await this.getOrCreateUser(requesterUsername);
+
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+    });
+    if (!room || !room.isGroup) {
+      throw new Error('Nhóm chat không tồn tại!');
+    }
+
+    if (room.creatorId !== requester.id) {
+      throw new Error('Chỉ trưởng nhóm mới có quyền xóa thành viên khỏi nhóm!');
+    }
+
+    const targetMember = await this.prisma.roomMember.findFirst({
+      where: {
+        roomId,
+        OR: [{ userId: targetUserId }, { user: { username: targetUserId } }],
+      },
+      include: { user: true },
+    });
+
+    if (!targetMember) {
+      throw new Error('Thành viên này không có trong nhóm!');
+    }
+
+    if (targetMember.userId === requester.id) {
+      throw new Error('Bạn là trưởng nhóm, không thể tự xóa mình khỏi nhóm!');
+    }
+
+    await this.prisma.roomMember.deleteMany({
+      where: { roomId, userId: targetMember.userId },
+    });
+
+    const vnTime = new Date(Date.now() + 7 * 60 * 60 * 1000);
+    const sysMsgId = require('crypto').randomUUID();
+    const requesterDisplay = requester.displayName || requester.username;
+    const targetDisplay = targetMember.user.displayName || targetMember.user.username;
+    const content = `🚪 ${requesterDisplay} đã xóa ${targetDisplay} khỏi nhóm`;
+
+    await this.prisma.message.create({
+      data: {
+        id: sysMsgId,
+        content,
+        senderId: requester.id,
+        roomId,
+        createdAt: vnTime,
+        isRevoked: false,
+        isPinned: false,
+      },
+    });
+
+    const systemMessage = {
+      id: sysMsgId,
+      content,
+      sender: requesterDisplay,
+      roomId,
+      createdAt: vnTime.toISOString().replace('Z', '+07:00'),
+      isRevoked: false,
+      isPinned: false,
+      isSystem: true,
+    };
+
+    const members = await this.getGroupMembers(roomId);
+    return {
+      success: true,
+      roomId,
+      kickedUser: {
+        id: targetMember.user.id,
+        username: targetMember.user.username,
+        displayName: targetMember.user.displayName,
+      },
+      systemMessage,
+      remainingCount: members.length,
       members,
     };
   }

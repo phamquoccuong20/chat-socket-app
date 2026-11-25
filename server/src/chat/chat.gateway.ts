@@ -356,6 +356,60 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.server.emit('groupDeleted', { roomId });
   }
 
+  // Thông báo tới thành viên khi bị đuổi khỏi nhóm
+  notifyMemberKicked(roomId: string, kickedUser: any, groupName: string) {
+    const uName = kickedUser?.username;
+    const payload = {
+      roomId,
+      groupName,
+      kickedUserId: kickedUser?.id,
+      kickedUsername: uName,
+      kickedDisplayName: kickedUser?.displayName,
+    };
+
+    if (uName) {
+      this.server.to(`user:${uName}`).emit('kickedFromGroup', payload);
+      this.server.to(`user:${uName.toLowerCase()}`).emit('kickedFromGroup', payload);
+      try {
+        this.server.in(`user:${uName}`).socketsLeave(roomId);
+        this.server.in(`user:${uName.toLowerCase()}`).socketsLeave(roomId);
+      } catch (e) {}
+    }
+    this.server.to(roomId).emit('memberKicked', payload);
+  }
+
+  @SubscribeMessage('kickGroupMember')
+  async handleKickGroupMember(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { roomId: string; targetUserId: string; requesterUsername: string },
+  ) {
+    try {
+      const result = await this.chatService.removeGroupMember(
+        payload.roomId,
+        payload.targetUserId,
+        payload.requesterUsername,
+      );
+      const room = await this.chatService.getOrCreateRoom(payload.roomId);
+      const updatedGroup = {
+        id: payload.roomId,
+        name: room.name,
+        avatarUrl: (room as any).avatarUrl || null,
+        isGroup: true,
+        memberCount: result.remainingCount,
+        members: result.members,
+      };
+
+      this.server.to(payload.roomId).emit('groupUpdated', updatedGroup);
+      if (result.systemMessage) {
+        this.server.to(payload.roomId).emit('newMessage', result.systemMessage);
+      }
+      this.notifyMemberKicked(payload.roomId, result.kickedUser, room.name);
+      return { success: true, result };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
   // Thông báo khi cuộc trò chuyện 1-1 bị xóa
   notifyConversationDeleted(roomId: string) {
     this.server.to(roomId).emit('conversationDeleted', { roomId });

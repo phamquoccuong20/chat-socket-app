@@ -237,6 +237,61 @@ export class ChatController {
     return { success: true, result };
   }
 
+  // API xóa thành viên khỏi nhóm chat (Dành cho trưởng nhóm)
+  @Delete('groups/:id/members/:userId')
+  async removeGroupMember(
+    @Param('id') roomId: string,
+    @Param('userId') targetUserId: string,
+    @Query('requesterUsername') queryRequester?: string,
+    @Body() body?: { requesterUsername?: string },
+  ) {
+    const requester = queryRequester || body?.requesterUsername || '';
+    const result = await this.chatService.removeGroupMember(roomId, targetUserId, requester);
+    const room = await this.chatService.getOrCreateRoom(roomId);
+    const updatedGroup = {
+      id: roomId,
+      name: room.name,
+      avatarUrl: (room as any).avatarUrl || null,
+      isGroup: true,
+      memberCount: result.remainingCount,
+      members: result.members,
+    };
+
+    this.chatGateway.server.to(roomId).emit('groupUpdated', updatedGroup);
+    if (result.systemMessage) {
+      this.chatGateway.server.to(roomId).emit('newMessage', result.systemMessage);
+    }
+    this.chatGateway.notifyMemberKicked(roomId, result.kickedUser, room.name);
+
+    return { success: true, result };
+  }
+
+  // API kick thành viên bằng POST để tránh các giới hạn method
+  @Post('groups/:id/kick')
+  async kickGroupMember(
+    @Param('id') roomId: string,
+    @Body() body: { targetUserId: string; requesterUsername: string },
+  ) {
+    const result = await this.chatService.removeGroupMember(roomId, body.targetUserId, body.requesterUsername);
+    const room = await this.chatService.getOrCreateRoom(roomId);
+    const updatedGroup = {
+      id: roomId,
+      name: room.name,
+      avatarUrl: (room as any).avatarUrl || null,
+      isGroup: true,
+      memberCount: result.remainingCount,
+      members: result.members,
+    };
+
+    this.chatGateway.server.to(roomId).emit('groupUpdated', updatedGroup);
+    if (result.systemMessage) {
+      this.chatGateway.server.to(roomId).emit('newMessage', result.systemMessage);
+    }
+    this.chatGateway.notifyMemberKicked(roomId, result.kickedUser, room.name);
+
+    return { success: true, result };
+  }
+
   // API xóa cuộc trò chuyện 1-1
   @Delete('conversations/:roomId')
   async deleteConversation(@Param('roomId') roomId: string) {
