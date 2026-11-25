@@ -60,7 +60,8 @@ export class ChatController {
       originalName = file.originalname;
     }
 
-    const fileUrl = `http://localhost:8000/uploads/chat/${file.filename}`;
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || 'http://localhost:8000';
+    const fileUrl = `${baseUrl}/uploads/chat/${file.filename}`;
 
     return {
       success: true,

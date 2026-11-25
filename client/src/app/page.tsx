@@ -54,6 +54,8 @@ import {
   Crown,
 } from "lucide-react";
 
+const BACKEND_URL = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:8000").replace(/\/$/, "");
+
 interface Message {
   id: string;
   roomId: string;
@@ -202,7 +204,7 @@ export default function ChatApp() {
   const loadUserGroups = async (targetUser: string) => {
     if (!targetUser) return;
     try {
-      const res = await fetch(`http://localhost:8000/chat/groups?user=${encodeURIComponent(targetUser)}`);
+      const res = await fetch(`${BACKEND_URL}/chat/groups?user=${encodeURIComponent(targetUser)}`);
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -218,7 +220,7 @@ export default function ChatApp() {
     try {
       const current = userProfile?.username || username;
       const res = await fetch(
-        `http://localhost:8000/auth/search?q=${encodeURIComponent(query)}&current=${encodeURIComponent(current)}`
+        `${BACKEND_URL}/auth/search?q=${encodeURIComponent(query)}&current=${encodeURIComponent(current)}`
       );
       if (!res.ok) return;
       const data = await res.json();
@@ -236,7 +238,7 @@ export default function ChatApp() {
     if (!targetUser) return;
     try {
       const res = await fetch(
-        `http://localhost:8000/auth/conversations?user=${encodeURIComponent(targetUser)}`
+        `${BACKEND_URL}/auth/conversations?user=${encodeURIComponent(targetUser)}`
       );
       if (!res.ok) return;
       const data = await res.json();
@@ -253,7 +255,7 @@ export default function ChatApp() {
     if (!roomId) return;
     setIsLoadingMedia(true);
     try {
-      const res = await fetch(`http://localhost:8000/chat/rooms/${encodeURIComponent(roomId)}/media`);
+      const res = await fetch(`${BACKEND_URL}/chat/rooms/${encodeURIComponent(roomId)}/media`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -383,7 +385,7 @@ export default function ChatApp() {
 
   // Khởi tạo Socket.IO (chỉ tạo 1 lần duy nhất)
   useEffect(() => {
-    const socketInstance = io("http://localhost:8000", {
+    const socketInstance = io(BACKEND_URL, {
       transports: ["websocket", "polling"],
     });
 
@@ -722,7 +724,7 @@ export default function ChatApp() {
               password: authPassword,
             };
 
-      const res = await fetch(`http://localhost:8000${endpoint}`, {
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -868,7 +870,7 @@ export default function ChatApp() {
     setIsSearchingFriends(true);
     try {
       const res = await fetch(
-        `http://localhost:8000/auth/search?q=${encodeURIComponent(query.trim())}&current=${encodeURIComponent(username)}`
+        `${BACKEND_URL}/auth/search?q=${encodeURIComponent(query.trim())}&current=${encodeURIComponent(username)}`
       );
       const data = await res.json();
       setFriendSearchResults(Array.isArray(data) ? data : []);
@@ -961,7 +963,7 @@ export default function ChatApp() {
     setIsCreatingGroup(true);
     try {
       const creatorName = userProfile?.username || username;
-      const res = await fetch("http://localhost:8000/chat/groups", {
+      const res = await fetch(`${BACKEND_URL}/chat/groups`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -993,7 +995,7 @@ export default function ChatApp() {
     setSelectedNewMembers([]);
     setShowAddMemberModal(true);
     try {
-      const res = await fetch(`http://localhost:8000/chat/groups/${encodeURIComponent(currentRoom)}/members`);
+      const res = await fetch(`${BACKEND_URL}/chat/groups/${encodeURIComponent(currentRoom)}/members`);
       if (res.ok) {
         const members = await res.json();
         if (Array.isArray(members)) {
@@ -1022,7 +1024,7 @@ export default function ChatApp() {
 
     setIsAddingMembers(true);
     try {
-      const res = await fetch(`http://localhost:8000/chat/groups/${currentRoom}/members`, {
+      const res = await fetch(`${BACKEND_URL}/chat/groups/${currentRoom}/members`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1050,7 +1052,7 @@ export default function ChatApp() {
     setIsLoadingGroupMembers(true);
     setShowGroupMembersModal(true);
     try {
-      const res = await fetch(`http://localhost:8000/chat/groups/${encodeURIComponent(currentRoom)}/members`);
+      const res = await fetch(`${BACKEND_URL}/chat/groups/${encodeURIComponent(currentRoom)}/members`);
       if (res.ok) {
         const members = await res.json();
         if (Array.isArray(members)) {
@@ -1084,7 +1086,7 @@ export default function ChatApp() {
     try {
       const formData = new FormData();
       formData.append("avatar", file);
-      const res = await fetch("http://localhost:8000/auth/upload-avatar", {
+      const res = await fetch(`${BACKEND_URL}/auth/upload-avatar`, {
         method: "POST",
         body: formData,
       });
@@ -1107,7 +1109,7 @@ export default function ChatApp() {
     if (!currentGroupObj || !editGroupName.trim()) return;
     setIsUpdatingGroup(true);
     try {
-      const res = await fetch(`http://localhost:8000/chat/groups/${currentGroupObj.id}`, {
+      const res = await fetch(`${BACKEND_URL}/chat/groups/${currentGroupObj.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1171,7 +1173,7 @@ export default function ChatApp() {
 
     try {
       if (actionModal.type === "deleteGroup") {
-        const res = await fetch(`http://localhost:8000/chat/groups/${actionModal.targetId}`, {
+        const res = await fetch(`${BACKEND_URL}/chat/groups/${actionModal.targetId}`, {
           method: "DELETE",
         });
         if (!res.ok) throw new Error("Xóa nhóm thất bại!");
@@ -1181,7 +1183,7 @@ export default function ChatApp() {
         }
       } else if (actionModal.type === "leaveGroup") {
         const current = userProfile?.username || username;
-        const res = await fetch(`http://localhost:8000/chat/groups/${actionModal.targetId}/leave`, {
+        const res = await fetch(`${BACKEND_URL}/chat/groups/${actionModal.targetId}/leave`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ username: current }),
@@ -1192,7 +1194,7 @@ export default function ChatApp() {
           handleSwitchChannel("general");
         }
       } else if (actionModal.type === "deleteConversation") {
-        const res = await fetch(`http://localhost:8000/chat/conversations/${actionModal.targetId}`, {
+        const res = await fetch(`${BACKEND_URL}/chat/conversations/${actionModal.targetId}`, {
           method: "DELETE",
         });
         if (!res.ok) throw new Error("Xóa cuộc trò chuyện thất bại!");
@@ -1209,7 +1211,7 @@ export default function ChatApp() {
       } else if (actionModal.type === "transferLeader") {
         if (!currentRoom) return;
         const current = userProfile?.username || username;
-        const res = await fetch(`http://localhost:8000/chat/groups/${currentRoom}/transfer-leader`, {
+        const res = await fetch(`${BACKEND_URL}/chat/groups/${currentRoom}/transfer-leader`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1259,7 +1261,7 @@ export default function ChatApp() {
       const formData = new FormData();
       formData.append("avatar", file);
 
-      const res = await fetch("http://localhost:8000/auth/upload-avatar", {
+      const res = await fetch(`${BACKEND_URL}/auth/upload-avatar`, {
         method: "POST",
         body: formData,
       });
@@ -1295,7 +1297,7 @@ export default function ChatApp() {
     setIsUpdatingProfile(true);
 
     try {
-      const res = await fetch("http://localhost:8000/auth/profile", {
+      const res = await fetch(`${BACKEND_URL}/auth/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1372,7 +1374,7 @@ export default function ChatApp() {
     setIsUpdatingProfile(true);
 
     try {
-      const res = await fetch("http://localhost:8000/auth/change-password", {
+      const res = await fetch(`${BACKEND_URL}/auth/change-password`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1427,7 +1429,7 @@ export default function ChatApp() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch("http://localhost:8000/chat/upload", {
+      const res = await fetch(`${BACKEND_URL}/chat/upload`, {
         method: "POST",
         body: formData,
       });
@@ -1873,7 +1875,7 @@ export default function ChatApp() {
               {isConnected ? (
                 <span className="flex items-center text-emerald-400 gap-1.5 font-medium">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  Đã kết nối (Port 8000)
+                  Đã kết nối
                 </span>
               ) : (
                 <span className="flex items-center text-amber-400 gap-1.5 font-medium">

@@ -55,7 +55,8 @@ export class AuthController {
     if (!file) {
       throw new BadRequestException('Không tìm thấy file ảnh tải lên!');
     }
-    const avatarUrl = `http://localhost:8000/uploads/avatars/${file.filename}`;
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || 'http://localhost:8000';
+    const avatarUrl = `${baseUrl}/uploads/avatars/${file.filename}`;
     return {
       success: true,
       avatarUrl,
