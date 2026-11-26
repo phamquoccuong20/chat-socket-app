@@ -58,6 +58,7 @@ model Message {
   replyToId      String?
   replyToSender  String?
   replyToContent String?
+  reactions      String?  @default("{}")
   createdAt      DateTime @default(now())
   senderId       String
   roomId         String
