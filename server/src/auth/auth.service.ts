@@ -203,6 +203,29 @@ export class AuthService {
     };
   }
 
+  // Lấy chi tiết thông tin hồ sơ của người dùng để xem thông tin
+  async getUserInfo(identifier: string) {
+    if (!identifier) return null;
+    const cleanId = identifier.trim();
+    return this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: cleanId.toLowerCase() },
+          { id: cleanId },
+          { displayName: cleanId },
+        ],
+      },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        phone: true,
+        avatarUrl: true,
+        createdAt: true,
+      },
+    });
+  }
+
   // Tìm kiếm bạn bè qua Số điện thoại hoặc Tên đăng nhập / Tên hiển thị (nếu để trống trả về danh sách gợi ý)
   async searchUsers(query?: string, currentUsername?: string) {
     const cleanQuery = query ? query.trim() : '';

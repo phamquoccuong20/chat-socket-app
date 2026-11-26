@@ -94,6 +94,12 @@ export class AuthController {
     return this.authService.searchUsers(query, currentUsername);
   }
 
+  // API xem thông tin chi tiết của một người dùng
+  @Get('user-info')
+  async getUserInfo(@Query('user') identifier: string) {
+    return this.authService.getUserInfo(identifier);
+  }
+
   // API lấy danh sách các cuộc trò chuyện gần đây của người dùng từ SQL Server
   // Dùng để hiển thị danh sách chat 1-1 ở cột bên trái (kể cả khi người kia đang offline)
   @Get('conversations')

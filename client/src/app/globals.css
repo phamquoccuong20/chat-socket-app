@@ -33,6 +33,31 @@ body {
    - Thanh nhập tin nhắn bo tròn mềm mại
    ======================================================== */
 
+/* Hiệu ứng chuyển động mượt mà khi đổi theme (Smooth Theme Transition) */
+.light-mode,
+.dark,
+.light-mode aside,
+.dark aside,
+.light-mode header,
+.dark header,
+.light-mode main,
+.dark main,
+.light-mode input,
+.dark input,
+.light-mode textarea,
+.dark textarea,
+.light-mode .bg-\[\#161b22\],
+.dark .bg-\[\#161b22\],
+.light-mode .bg-\[\#0d1117\],
+.dark .bg-\[\#0d1117\],
+.light-mode .bg-\[\#1f242c\],
+.dark .bg-\[\#1f242c\] {
+  transition: background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
 .light-mode {
   background-color: #f0f2f5 !important;
   color: #0f172a !important;

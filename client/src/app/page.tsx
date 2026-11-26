@@ -55,6 +55,7 @@ import {
   UserMinus,
   Sun,
   Moon,
+  Calendar,
 } from "lucide-react";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -144,7 +145,18 @@ export default function ChatApp() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isUploadingChatFile, setIsUploadingChatFile] = useState(false);
+  const [pastedImageFile, setPastedImageFile] = useState<File | null>(null);
+  const [pastedImagePreview, setPastedImagePreview] = useState<string | null>(null);
   const [previewImageModal, setPreviewImageModal] = useState<{ url: string; name: string } | null>(null);
+  // Xem thông tin hồ sơ người khác (Profile Card Modal)
+  const [viewingUser, setViewingUser] = useState<{
+    id?: string;
+    username: string;
+    displayName: string;
+    phone?: string | null;
+    avatarUrl?: string | null;
+    createdAt?: string;
+  } | null>(null);
   const chatFileInputRef = useRef<HTMLInputElement | null>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
   const [typingUser, setTypingUser] = useState<string | null>(null);
@@ -183,7 +195,16 @@ export default function ChatApp() {
   useEffect(() => {
     try {
       const savedTheme = localStorage.getItem("chat_theme") as "dark" | "light";
-      if (savedTheme) setTheme(savedTheme);
+      if (savedTheme) {
+        setTheme(savedTheme);
+        if (savedTheme === "light") {
+          document.documentElement.classList.add("light");
+          document.documentElement.classList.remove("dark");
+        } else {
+          document.documentElement.classList.add("dark");
+          document.documentElement.classList.remove("light");
+        }
+      }
     } catch {}
   }, []);
 
@@ -192,6 +213,13 @@ export default function ChatApp() {
     setTheme(nextTheme);
     try {
       localStorage.setItem("chat_theme", nextTheme);
+      if (nextTheme === "light") {
+        document.documentElement.classList.add("light");
+        document.documentElement.classList.remove("dark");
+      } else {
+        document.documentElement.classList.add("dark");
+        document.documentElement.classList.remove("light");
+      }
     } catch {}
   };
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
@@ -232,6 +260,7 @@ export default function ChatApp() {
 
   // Tính năng Thả cảm xúc / Like tin nhắn (Reactions)
   const [activeReactionMessageId, setActiveReactionMessageId] = useState<string | null>(null);
+  const [expandedReactionMsgs, setExpandedReactionMsgs] = useState<Record<string, boolean>>({});
 
   // Tải danh sách nhóm chat của user từ SQL Server
   const loadUserGroups = async (targetUser: string) => {
@@ -1460,6 +1489,58 @@ export default function ChatApp() {
     }
   };
 
+  // Mở modal xem thông tin người dùng (Profile Card)
+  const handleViewUserProfile = async (targetUser: string) => {
+    if (!targetUser) return;
+    const cleanTarget = targetUser.trim();
+
+    // Tìm trong cache danh bạ / conversations để hiển thị tức thì
+    const foundConv = conversations.find(
+      (c: any) =>
+        (c.contactUser?.username && c.contactUser.username.toLowerCase() === cleanTarget.toLowerCase()) ||
+        (c.contactUser?.displayName && c.contactUser.displayName.toLowerCase() === cleanTarget.toLowerCase()) ||
+        (c.contactName && c.contactName.toLowerCase() === cleanTarget.toLowerCase())
+    );
+
+    const isSelf =
+      cleanTarget.toLowerCase() === (userProfile?.username || "").toLowerCase() ||
+      cleanTarget.toLowerCase() === (userProfile?.displayName || "").toLowerCase() ||
+      cleanTarget.toLowerCase() === (username || "").toLowerCase();
+
+    if (isSelf) {
+      setViewingUser({
+        id: userProfile?.id,
+        username: userProfile?.username || username,
+        displayName: userProfile?.displayName || username,
+        phone: userProfile?.phone,
+        avatarUrl: userProfile?.avatarUrl,
+        createdAt: userProfile?.createdAt,
+      });
+      return;
+    }
+
+    setViewingUser({
+      id: foundConv?.contactUser?.id,
+      username: foundConv?.contactUser?.username || cleanTarget,
+      displayName: foundConv?.contactUser?.displayName || cleanTarget,
+      phone: foundConv?.contactUser?.phone,
+      avatarUrl: foundConv?.contactUser?.avatarUrl || getSenderAvatar(cleanTarget),
+      createdAt: foundConv?.contactUser?.createdAt,
+    });
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/auth/user-info?user=${encodeURIComponent(cleanTarget)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data) {
+          setViewingUser(data);
+        }
+      }
+    } catch {
+      // Dùng dữ liệu tạm nếu đang offline
+    }
+  };
+
   // Mở modal cài đặt hồ sơ: luôn đồng bộ dữ liệu đang lưu trong database
   const handleOpenProfileModal = () => {
     setEditDisplayName(userProfile?.displayName || username);
@@ -1663,10 +1744,144 @@ export default function ChatApp() {
     }
   };
 
+  // Xóa ảnh clipboard đã dán
+  const clearPastedImage = () => {
+    if (pastedImagePreview) {
+      URL.revokeObjectURL(pastedImagePreview);
+    }
+    setPastedImageFile(null);
+    setPastedImagePreview(null);
+  };
+
+  // Xử lý dán ảnh từ clipboard (Ctrl+V)
+  const processPastedFile = (file: File) => {
+    const ext = file.type.split("/")[1] || "png";
+    const namedFile =
+      file.name && file.name !== "image.png"
+        ? file
+        : new File([file], `paste_${Date.now()}.${ext}`, { type: file.type || "image/png" });
+
+    setPastedImagePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(namedFile);
+    });
+    setPastedImageFile(namedFile);
+    messageInputRef.current?.focus();
+  };
+
+  const handlePasteImage = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          processPastedFile(file);
+          break;
+        }
+      }
+    }
+  };
+
+  // Lắng nghe sự kiện Paste toàn cục khi người dùng ấn Ctrl+V
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const activeEl = document.activeElement;
+      const isOtherInput =
+        activeEl &&
+        (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA") &&
+        activeEl !== messageInputRef.current;
+
+      if (isOtherInput) return;
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            processPastedFile(file);
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener("paste", handleGlobalPaste);
+    return () => {
+      window.removeEventListener("paste", handleGlobalPaste);
+    };
+  }, []);
+
   // Gửi tin nhắn
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim() || !socket) return;
+    if ((!inputMessage.trim() && !pastedImageFile) || !socket) return;
+
+    if (pastedImageFile) {
+      if (pastedImageFile.size > 25 * 1024 * 1024) {
+        alert("Dung lượng ảnh tối đa là 25MB!");
+        return;
+      }
+
+      setIsUploadingChatFile(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", pastedImageFile);
+
+        const res = await fetch(`${BACKEND_URL}/chat/upload`, {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "Tải ảnh lên thất bại!");
+
+        socket.emit("sendMessage", {
+          roomId: currentRoom,
+          sender: username,
+          recipient: activeTab === "dm" ? dmTargetUser : undefined,
+          content: inputMessage.trim(),
+          fileUrl: data.fileUrl,
+          fileName: data.fileName,
+          fileType: data.fileType,
+          fileSize: data.fileSize,
+          replyToId: replyingMessage ? replyingMessage.id : undefined,
+          replyToSender: replyingMessage ? replyingMessage.sender : undefined,
+          replyToContent: replyingMessage
+            ? replyingMessage.isRevoked
+              ? "Tin nhắn đã được thu hồi"
+              : replyingMessage.fileUrl
+              ? isImageFile(replyingMessage.fileType, replyingMessage.fileName)
+                ? "[Hình ảnh]"
+                : `[Tệp tin] ${replyingMessage.fileName || ""}`
+              : replyingMessage.content
+            : undefined,
+        });
+
+        socket.emit("typing", {
+          roomId: currentRoom,
+          username,
+          isTyping: false,
+        });
+
+        clearPastedImage();
+        setInputMessage("");
+        setReplyingMessage(null);
+        setShowEmojiPicker(false);
+      } catch (err: any) {
+        alert(err.message || "Lỗi khi gửi ảnh dán!");
+      } finally {
+        setIsUploadingChatFile(false);
+      }
+      return;
+    }
 
     socket.emit("sendMessage", {
       roomId: currentRoom,
@@ -2053,24 +2268,26 @@ export default function ChatApp() {
           <button
             type="button"
             onClick={toggleTheme}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all shadow-sm border cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all duration-300 shadow-sm border cursor-pointer hover:scale-105 active:scale-95 ${
               isLight
                 ? "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 shadow-slate-200"
                 : "bg-slate-900/80 text-slate-300 border-slate-800 hover:bg-slate-800"
             }`}
             title={isLight ? "Chuyển sang giao diện Tối" : "Chuyển sang giao diện Sáng"}
           >
-            {isLight ? (
-              <>
-                <Moon className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Giao diện Sáng</span>
-              </>
-            ) : (
-              <>
-                <Sun className="w-3.5 h-3.5 text-amber-400" />
-                <span>Giao diện Tối</span>
-              </>
-            )}
+            <div className="relative w-3.5 h-3.5">
+              <Sun
+                className={`w-3.5 h-3.5 text-amber-400 absolute inset-0 transition-all duration-500 ease-out ${
+                  !isLight ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-0 opacity-0"
+                }`}
+              />
+              <Moon
+                className={`w-3.5 h-3.5 text-indigo-600 absolute inset-0 transition-all duration-500 ease-out ${
+                  isLight ? "rotate-0 scale-100 opacity-100" : "rotate-90 scale-0 opacity-0"
+                }`}
+              />
+            </div>
+            <span>{isLight ? "Giao diện Sáng" : "Giao diện Tối"}</span>
           </button>
         </div>
 
@@ -2567,9 +2784,9 @@ export default function ChatApp() {
     : allDmItems;
 
   return (
-    <div className={`flex h-screen overflow-hidden font-sans selection:bg-indigo-500 selection:text-white ${theme === "light" ? "light-mode bg-slate-50 text-slate-800" : "dark bg-[#0d1117] text-slate-200"}`}>
+    <div className={`flex h-screen overflow-hidden font-sans selection:bg-indigo-500 selection:text-white transition-colors duration-300 ease-in-out ${theme === "light" ? "light-mode bg-slate-50 text-slate-800" : "dark bg-[#0d1117] text-slate-200"}`}>
       {/* 1. SIDEBAR TRÁI: KÊNH NHÓM + TIN NHẮN RIÊNG 1-1 */}
-      <aside className={`w-full md:w-72 bg-[#161b22] border-r border-slate-800/80 flex flex-col justify-between shrink-0 ${mobileActiveView === "chat" ? "hidden md:flex" : "flex"}`}>
+      <aside className={`w-full md:w-72 bg-[#161b22] border-r border-slate-800/80 flex flex-col justify-between shrink-0 transition-colors duration-300 ease-in-out ${mobileActiveView === "chat" ? "hidden md:flex" : "flex"}`}>
         <div className="overflow-y-auto flex-1">
           {/* Header Sidebar: Ô Tìm kiếm hội thoại & Nút Thao tác nhanh (Phong cách Zalo/Telegram) */}
           <div className="h-16 px-3.5 border-b border-slate-800/80 flex items-center gap-2 shrink-0">
@@ -2653,18 +2870,18 @@ export default function ChatApp() {
 
           {/* PHẦN 1: KÊNH CỘNG ĐỒNG (CHANNELS) */}
           <div className="p-4 pb-2">
-            <div className="flex items-center justify-between mb-2 px-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            <div className="flex items-center justify-between mb-2 px-2 gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
                 Kênh cộng đồng
               </span>
               <button
                 onClick={() => setShowAddRoom(!showAddRoom)}
-                className="w-5 h-5 rounded hover:bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition"
+                className="w-5 h-5 rounded hover:bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition shrink-0"
                 title="Tạo kênh mới"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
-        </div>
+            </div>
 
             {showAddRoom && (
               <form onSubmit={handleCreateRoom} className="mb-2 px-1">
@@ -2715,20 +2932,22 @@ export default function ChatApp() {
 
           {/* PHẦN 2: NHÓM CHAT (GROUP CHAT) */}
           <div className="p-4 py-2 border-t border-slate-800/60">
-            <div className="flex items-center justify-between mb-2 px-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <span>Nhóm chat</span>
-                <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-[10px] text-slate-400 font-normal">
+            <div className="flex items-center justify-between mb-2 px-2 gap-2">
+              <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                  Nhóm chat
+                </span>
+                <span className="px-1.5 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 font-normal whitespace-nowrap">
                   {groupList.length}
                 </span>
-              </span>
+              </div>
               <button
                 type="button"
                 onClick={handleOpenCreateGroup}
-                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-slate-800 transition cursor-pointer"
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-slate-800 transition cursor-pointer shrink-0 whitespace-nowrap"
                 title="Tạo nhóm chat mới"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-3.5 h-3.5 shrink-0" />
                 <span>Tạo nhóm</span>
               </button>
             </div>
@@ -2783,24 +3002,30 @@ export default function ChatApp() {
           </div>
 
           {/* PHẦN 3: TIN NHẮN TRỰC TIẾP 1-1 */}
-          <div className="p-4 pt-2">
-            <div className="flex items-center justify-between mb-2 px-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <span>Chat riêng 1-1</span>
-                <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-[10px] text-slate-400 font-normal">
-                  {otherOnlineUsers.length} online
+          <div className="p-4 py-2 border-t border-slate-800/60">
+            <div className="flex items-center justify-between mb-2 px-2 gap-2">
+              <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                  Chat riêng
                 </span>
-              </span>
+                <span
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-800 text-[10px] text-emerald-400 font-medium whitespace-nowrap"
+                  title={`${otherOnlineUsers.length} người đang online`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                  {otherOnlineUsers.length}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowSearchFriendModal(true)}
-                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-slate-800 transition cursor-pointer"
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-slate-800 transition cursor-pointer shrink-0 whitespace-nowrap"
                 title="Tìm bạn bè qua Số điện thoại hoặc Tên"
               >
-                <UserPlus className="w-3.5 h-3.5" />
+                <UserPlus className="w-3.5 h-3.5 shrink-0" />
                 <span>Tìm bạn</span>
               </button>
-        </div>
+            </div>
 
             <div className="space-y-1">
               {filteredDmItems.length === 0 ? (
@@ -2925,14 +3150,25 @@ export default function ChatApp() {
             <button
               type="button"
               onClick={toggleTheme}
-              className={`p-2 rounded-xl transition cursor-pointer border ${
+              className={`p-2 rounded-xl transition-all duration-300 cursor-pointer border hover:scale-105 active:scale-95 ${
                 theme === "light"
-                  ? "bg-slate-200 text-amber-600 border-slate-300 hover:bg-slate-300"
-                  : "text-slate-400 hover:text-amber-400 hover:bg-slate-800/80 border-transparent"
+                  ? "bg-amber-500/10 text-amber-600 border-amber-500/30 hover:bg-amber-500/20 shadow-sm"
+                  : "text-slate-400 hover:text-amber-400 hover:bg-slate-800/80 border-transparent hover:border-slate-800"
               }`}
               title={theme === "dark" ? "Chuyển sang giao diện Sáng" : "Chuyển sang giao diện Tối"}
             >
-              {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-600" />}
+              <div className="relative w-4 h-4">
+                <Sun
+                  className={`w-4 h-4 text-amber-400 absolute inset-0 transition-all duration-500 ease-out ${
+                    theme === "dark" ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-0 opacity-0"
+                  }`}
+                />
+                <Moon
+                  className={`w-4 h-4 text-indigo-500 absolute inset-0 transition-all duration-500 ease-out ${
+                    theme === "light" ? "rotate-0 scale-100 opacity-100" : "rotate-90 scale-0 opacity-0"
+                  }`}
+                />
+              </div>
             </button>
             <button
               onClick={handleLogout}
@@ -2946,8 +3182,8 @@ export default function ChatApp() {
       </aside>
 
       {/* 2. KHUNG CHAT CHÍNH */}
-      <main className={`flex-1 flex flex-col bg-[#0d1117] min-w-0 ${mobileActiveView === "sidebar" ? "hidden md:flex" : "flex"}`}>
-        <header className="h-16 px-4 md:px-6 border-b border-slate-800/80 bg-[#161b22]/90 backdrop-blur-md flex items-center justify-between shrink-0 relative z-30">
+      <main className={`flex-1 flex flex-col bg-[#0d1117] min-w-0 transition-colors duration-300 ease-in-out ${mobileActiveView === "sidebar" ? "hidden md:flex" : "flex"}`}>
+        <header className="h-16 px-4 md:px-6 border-b border-slate-800/80 bg-[#161b22]/90 backdrop-blur-md flex items-center justify-between shrink-0 relative z-30 transition-colors duration-300 ease-in-out">
           <div className="flex items-center gap-2 md:gap-3 min-w-0">
             <button
               type="button"
@@ -3023,12 +3259,16 @@ export default function ChatApp() {
                 </>
               )
             ) : (
-              <>
+              <div
+                onClick={() => handleViewUserProfile(dmTargetUser || "")}
+                className="flex items-center gap-3 min-w-0 cursor-pointer hover:opacity-85 transition group"
+                title={`Xem hồ sơ của ${dmTargetUser}`}
+              >
                 <div className="relative">
                   <div
                     className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${getAvatarGradient(
                       dmTargetUser || ""
-                    )} flex items-center justify-center font-bold text-white text-sm shadow-md overflow-hidden`}
+                    )} flex items-center justify-center font-bold text-white text-sm shadow-md overflow-hidden group-hover:ring-2 group-hover:ring-indigo-400 transition`}
                   >
                     {renderAvatarContent(
                       conversations.find(
@@ -3051,7 +3291,7 @@ export default function ChatApp() {
                   ></span>
                 </div>
                 <div className="min-w-0">
-                  <div className="font-semibold text-sm text-white flex items-center gap-2">
+                  <div className="font-semibold text-sm text-white flex items-center gap-2 group-hover:text-indigo-300 transition">
                     <span>{dmTargetUser}</span>
                     {mutedRooms.includes(currentRoom) && (
                       <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0" title="Đã tắt thông báo">
@@ -3074,7 +3314,7 @@ export default function ChatApp() {
                     )}
                   </div>
                 </div>
-              </>
+              </div>
             )}
       </div>
 
@@ -3368,14 +3608,25 @@ export default function ChatApp() {
               <button
                 type="button"
                 onClick={toggleTheme}
-                className={`p-2 rounded-xl transition cursor-pointer border ${
+                className={`p-2 rounded-xl transition-all duration-300 cursor-pointer border hover:scale-105 active:scale-95 ${
                   theme === "light"
-                    ? "bg-slate-100 text-amber-600 border-slate-200 hover:bg-slate-200"
+                    ? "bg-amber-500/10 text-amber-600 border-amber-500/30 hover:bg-amber-500/20 shadow-sm"
                     : "bg-slate-900/60 text-slate-400 hover:text-amber-400 hover:bg-slate-800 border-slate-800 hover:border-slate-700"
                 }`}
                 title={theme === "dark" ? "Chuyển sang giao diện Sáng" : "Chuyển sang giao diện Tối"}
               >
-                {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-400" />}
+                <div className="relative w-4 h-4">
+                  <Sun
+                    className={`w-4 h-4 text-amber-400 absolute inset-0 transition-all duration-500 ease-out ${
+                      theme === "dark" ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-0 opacity-0"
+                    }`}
+                  />
+                  <Moon
+                    className={`w-4 h-4 text-indigo-500 absolute inset-0 transition-all duration-500 ease-out ${
+                      theme === "light" ? "rotate-0 scale-100 opacity-100" : "rotate-90 scale-0 opacity-0"
+                    }`}
+                  />
+                </div>
               </button>
               <button className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition" title="Cuộc gọi thoại (Demo)">
                 <Phone className="w-4 h-4" />
@@ -3646,13 +3897,16 @@ export default function ChatApp() {
                   }`}
                 >
                   {!isSameSenderAsPrev ? (
-                    <div
+                    <button
+                      type="button"
+                      onClick={() => handleViewUserProfile(msg.sender)}
                       className={`w-9 h-9 rounded-xl shrink-0 bg-gradient-to-tr ${getAvatarGradient(
                         msg.sender
-                      )} flex items-center justify-center font-bold text-white text-xs shadow-md mt-0.5 overflow-hidden`}
+                      )} flex items-center justify-center font-bold text-white text-xs shadow-md mt-0.5 overflow-hidden cursor-pointer hover:ring-2 hover:ring-indigo-400 hover:scale-105 transition`}
+                      title={`Xem thông tin ${msg.sender}`}
                     >
                       {renderAvatarContent(getSenderAvatar(msg.sender), msg.sender, "sm")}
-                    </div>
+                    </button>
                   ) : (
                     <div className="w-9 shrink-0" />
                   )}
@@ -3660,9 +3914,14 @@ export default function ChatApp() {
                   <div className={`flex flex-col max-w-lg ${isMe ? "items-end" : "items-start"}`}>
                     {!isSameSenderAsPrev && (
                       <div className="flex items-center gap-2 mb-1 px-1">
-                        <span className="text-xs font-semibold text-slate-300">
+                        <button
+                          type="button"
+                          onClick={() => handleViewUserProfile(msg.sender)}
+                          className="text-xs font-semibold text-slate-300 hover:text-indigo-400 hover:underline transition cursor-pointer text-left"
+                          title={`Xem thông tin ${msg.sender}`}
+                        >
                           {isMe ? "Bạn" : msg.sender}
-                        </span>
+                        </button>
                         {isMentioningMe && (
                           <span className="text-[10px] font-bold text-amber-500 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.2 rounded-md flex items-center gap-1 shadow-2xs">
                             <span>🔔</span> Đã nhắc đến bạn
@@ -3954,31 +4213,76 @@ export default function ChatApp() {
                     </div>
 
                     {/* Hiển thị các cảm xúc (Reactions) đã thả dưới chân tin nhắn */}
-                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                      <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? "justify-end" : "justify-start"}`}>
-                        {Object.entries(msg.reactions).map(([emoji, users]) => {
-                          if (!Array.isArray(users) || users.length === 0) return null;
-                          const isMyReaction = users.includes(username);
-                          const userListStr = users.join(", ");
+                    {msg.reactions && (
+                      (() => {
+                        const activeEntries = Object.entries(msg.reactions).filter(
+                          ([_, users]) => Array.isArray(users) && users.length > 0
+                        );
+                        if (activeEntries.length === 0) return null;
 
-                          return (
-                            <button
-                              key={emoji}
-                              type="button"
-                              onClick={() => handleToggleReaction(msg.id, emoji)}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition cursor-pointer border ${
-                                isMyReaction
-                                  ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-400 font-semibold shadow-xs"
-                                  : "bg-slate-800/70 border-slate-700/60 text-slate-300 hover:bg-slate-700"
-                              }`}
-                              title={`${userListStr} đã thả ${emoji}`}
-                            >
-                              <span className="text-sm leading-none">{emoji}</span>
-                              <span className="text-[10px] font-medium">{users.length}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                        const isExpanded = Boolean(expandedReactionMsgs[msg.id]);
+                        const displayedEntries = isExpanded || activeEntries.length <= 3
+                          ? activeEntries
+                          : activeEntries.slice(0, 3);
+                        const hiddenCount = activeEntries.length - 3;
+                        const totalReactions = activeEntries.reduce((sum, [_, users]) => sum + users.length, 0);
+
+                        return (
+                          <div
+                            className={`flex flex-wrap items-center gap-1 -mt-2 z-10 max-w-[280px] ${
+                              isMe ? "justify-end mr-1" : "justify-start ml-1"
+                            }`}
+                          >
+                            {displayedEntries.map(([emoji, users]) => {
+                              const isMyReaction = users.includes(username);
+                              const userListStr = users.join(", ");
+
+                              return (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => handleToggleReaction(msg.id, emoji)}
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] transition-all duration-150 cursor-pointer border shadow-sm hover:scale-105 active:scale-95 ${
+                                    isMyReaction
+                                      ? "bg-indigo-500/25 border-indigo-500/50 text-indigo-300 font-semibold ring-1 ring-indigo-500/20"
+                                      : "bg-[#161b22]/90 border-slate-700/70 text-slate-300 hover:bg-slate-800 hover:text-white"
+                                  }`}
+                                  title={`${userListStr} đã thả ${emoji}`}
+                                >
+                                  <span className="text-xs leading-none">{emoji}</span>
+                                  <span className="text-[10px] font-semibold">{users.length}</span>
+                                </button>
+                              );
+                            })}
+
+                            {!isExpanded && hiddenCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedReactionMsgs((prev) => ({ ...prev, [msg.id]: true }))
+                                }
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#161b22]/90 border border-slate-700/70 text-indigo-400 hover:text-indigo-300 hover:bg-slate-800 transition cursor-pointer shadow-sm active:scale-95"
+                                title={`Xem thêm ${hiddenCount} biểu tượng cảm xúc khác (${totalReactions} lượt thả)`}
+                              >
+                                +{hiddenCount}
+                              </button>
+                            )}
+
+                            {isExpanded && activeEntries.length > 3 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedReactionMsgs((prev) => ({ ...prev, [msg.id]: false }))
+                                }
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#161b22]/80 border border-slate-700/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition cursor-pointer active:scale-95"
+                                title="Thu gọn danh sách cảm xúc"
+                              >
+                                Thu gọn
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
                 </div>
@@ -4001,7 +4305,7 @@ export default function ChatApp() {
     </div>
 
         {/* Thanh nhập tin nhắn */}
-        <div className="p-4 bg-[#161b22]/70 border-t border-slate-800/80 shrink-0">
+        <div className="p-4 bg-[#161b22]/70 border-t border-slate-800/80 shrink-0 transition-colors duration-300 ease-in-out">
           <div className="relative max-w-5xl mx-auto">
             {showEmojiPicker && (
               <div className="absolute bottom-14 left-0 bg-slate-900 border border-slate-800 rounded-2xl p-3 shadow-2xl flex gap-2 backdrop-blur-xl z-20">
@@ -4120,6 +4424,41 @@ export default function ChatApp() {
               </div>
             )}
 
+            {/* Preview ảnh dán từ clipboard (Ctrl+V) */}
+            {pastedImagePreview && pastedImageFile && (
+              <div className="flex items-center justify-between p-2.5 mb-2 bg-[#161b22] border border-indigo-500/50 rounded-2xl shadow-xl animate-in slide-in-from-bottom-2 duration-150 backdrop-blur-md">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative group shrink-0">
+                    <img
+                      src={pastedImagePreview}
+                      alt="Pasted preview"
+                      className="w-14 h-14 object-cover rounded-xl border border-slate-700/80 shadow-md bg-black/40"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-400">
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      <span>Ảnh từ Clipboard</span>
+                    </div>
+                    <p className="text-xs text-white truncate font-medium mt-0.5">
+                      {pastedImageFile.name}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      {formatFileSize(pastedImageFile.size)} • Nhấn Gửi hoặc Enter để gửi
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearPastedImage}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer shrink-0"
+                  title="Hủy ảnh đã dán (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleSendMessage} className="flex items-center gap-2">
               <div className="flex-1 flex items-center bg-[#0d1117] border border-slate-800/90 rounded-2xl px-3 py-1.5 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 transition duration-200">
                 <input
@@ -4147,6 +4486,7 @@ export default function ChatApp() {
                   type="text"
                   value={inputMessage}
                   onChange={handleInputChange}
+                  onPaste={handlePasteImage}
                   onKeyDown={(e) => {
                     if (showMentionSuggestions && mentionCandidates.length > 0) {
                       if (e.key === "ArrowDown") {
@@ -4170,13 +4510,22 @@ export default function ChatApp() {
                         return;
                       }
                     }
-                    if (e.key === "Escape" && replyingMessage) {
-                      setReplyingMessage(null);
+                    if (e.key === "Escape") {
+                      if (pastedImageFile) {
+                        e.preventDefault();
+                        clearPastedImage();
+                        return;
+                      }
+                      if (replyingMessage) {
+                        setReplyingMessage(null);
+                      }
                     }
                   }}
                   placeholder={
                     replyingMessage
                       ? `Trả lời ${replyingMessage.sender}...`
+                      : pastedImageFile
+                      ? "Thêm nội dung kèm ảnh (hoặc nhấn Enter để gửi ngay)..."
                       : activeTab === "channel"
                       ? `Nhắn tin trong #${activeChannelObj.name}... (Gõ @ để tag tên)`
                       : `Nhắn tin riêng cho ${dmTargetUser}...`
@@ -4198,10 +4547,14 @@ export default function ChatApp() {
 
               <button
                 type="submit"
-                disabled={!inputMessage.trim()}
+                disabled={(!inputMessage.trim() && !pastedImageFile) || isUploadingChatFile}
                 className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-indigo-600/25 shrink-0 cursor-pointer active:scale-95"
               >
-                <Send className="w-4 h-4" />
+                {isUploadingChatFile ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
               </button>
             </form>
       </div>
@@ -4493,12 +4846,16 @@ export default function ChatApp() {
                       key={user.id}
                       className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition"
                     >
-                      <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        onClick={() => handleViewUserProfile(user.username || user.displayName)}
+                        className="flex items-center gap-3 min-w-0 cursor-pointer hover:opacity-85 transition group flex-1"
+                        title={`Xem thông tin ${user.displayName}`}
+                      >
                         <div className="relative shrink-0">
                           <div
                             className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${getAvatarGradient(
                               targetName
-                            )} flex items-center justify-center font-bold text-white text-xs shadow-sm overflow-hidden`}
+                            )} flex items-center justify-center font-bold text-white text-xs shadow-sm overflow-hidden group-hover:ring-2 group-hover:ring-indigo-400 transition`}
                           >
                             {renderAvatarContent(user.avatarUrl, targetName, "md")}
                           </div>
@@ -4509,7 +4866,7 @@ export default function ChatApp() {
                           ></span>
                     </div>
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
+                          <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5 group-hover:text-indigo-300 transition">
                             <span>{user.displayName}</span>
                             <span className="text-[10px] text-slate-500 font-normal">@{user.username}</span>
                       </div>
@@ -5287,12 +5644,16 @@ export default function ChatApp() {
                         key={member.id || member.username}
                         className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-900/50 border border-slate-800/80 gap-2"
                       >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div
+                          onClick={() => handleViewUserProfile(member.username || member.displayName)}
+                          className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-85 transition group"
+                          title={`Xem thông tin ${member.displayName || member.username}`}
+                        >
                           <div className="relative shrink-0">
                             <div
                               className={`w-9 h-9 rounded-xl bg-gradient-to-tr ${getAvatarGradient(
                                 member.displayName || member.username
-                              )} flex items-center justify-center font-bold text-white text-xs overflow-hidden`}
+                              )} flex items-center justify-center font-bold text-white text-xs overflow-hidden group-hover:ring-2 group-hover:ring-indigo-400 transition`}
                             >
                               {renderAvatarContent(member.avatarUrl, member.displayName || member.username, "sm")}
                             </div>
@@ -5618,6 +5979,178 @@ export default function ChatApp() {
                   </span>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL XEM THÔNG TIN NGƯỜI DÙNG (PROFILE CARD) */}
+      {viewingUser && (
+        <div
+          className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200"
+          onClick={() => setViewingUser(null)}
+        >
+          <div
+            className="bg-[#161b22] border border-slate-700/80 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header / Cover banner */}
+            <div className="h-28 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 relative">
+              <button
+                type="button"
+                onClick={() => setViewingUser(null)}
+                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white/80 hover:text-white flex items-center justify-center transition cursor-pointer"
+                title="Đóng (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Avatar & User header */}
+            <div className="px-5 pb-5 pt-0 relative">
+              <div className="flex justify-between items-end -mt-12 mb-3">
+                <div className="relative">
+                  <div
+                    className={`w-20 h-20 rounded-2xl bg-gradient-to-tr ${getAvatarGradient(
+                      viewingUser.displayName || viewingUser.username
+                    )} flex items-center justify-center font-bold text-white text-2xl shadow-xl ring-4 ring-[#161b22] overflow-hidden`}
+                  >
+                    {renderAvatarContent(
+                      viewingUser.avatarUrl || getSenderAvatar(viewingUser.displayName || viewingUser.username),
+                      viewingUser.displayName || viewingUser.username,
+                      "lg"
+                    )}
+                  </div>
+                  <span
+                    className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-[#161b22] ${
+                      onlineUsers.some(
+                        (u) =>
+                          u.toLowerCase() === viewingUser.username?.toLowerCase() ||
+                          u.toLowerCase() === viewingUser.displayName?.toLowerCase()
+                      )
+                        ? "bg-emerald-500 ring-2 ring-emerald-500/20"
+                        : "bg-slate-500"
+                    }`}
+                    title={
+                      onlineUsers.some(
+                        (u) =>
+                          u.toLowerCase() === viewingUser.username?.toLowerCase() ||
+                          u.toLowerCase() === viewingUser.displayName?.toLowerCase()
+                      )
+                        ? "Đang trực tuyến"
+                        : "Ngoại tuyến"
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[11px] font-medium px-2.5 py-1 rounded-full border ${
+                      onlineUsers.some(
+                        (u) =>
+                          u.toLowerCase() === viewingUser.username?.toLowerCase() ||
+                          u.toLowerCase() === viewingUser.displayName?.toLowerCase()
+                      )
+                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        : "bg-slate-800 text-slate-400 border-slate-700/60"
+                    }`}
+                  >
+                    {onlineUsers.some(
+                      (u) =>
+                        u.toLowerCase() === viewingUser.username?.toLowerCase() ||
+                        u.toLowerCase() === viewingUser.displayName?.toLowerCase()
+                    )
+                      ? "🟢 Trực tuyến"
+                      : "⚪ Ngoại tuyến"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Tên & Username */}
+              <div className="mb-4">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>{viewingUser.displayName || viewingUser.username}</span>
+                  {viewingUser.username?.toLowerCase() === (userProfile?.username || username).toLowerCase() && (
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      Bạn
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">@{viewingUser.username}</p>
+              </div>
+
+              {/* Thông tin chi tiết */}
+              <div className="space-y-2.5 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3.5 mb-4">
+                {/* Số điện thoại */}
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Phone className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Số điện thoại:</span>
+                  </div>
+                  <div className="font-medium text-slate-200 flex items-center gap-1.5">
+                    <span>{viewingUser.phone || "Chưa cập nhật"}</span>
+                    {viewingUser.phone && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(viewingUser.phone!);
+                          setCopyToast(true);
+                          setTimeout(() => setCopyToast(false), 2000);
+                        }}
+                        className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition cursor-pointer"
+                        title="Sao chép số điện thoại"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Ngày tham gia */}
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Ngày tham gia:</span>
+                  </div>
+                  <span className="font-medium text-slate-200">
+                    {viewingUser.createdAt
+                      ? new Date(viewingUser.createdAt).toLocaleDateString("vi-VN", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        })
+                      : "Mới tham gia"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Nút thao tác */}
+              {viewingUser.username?.toLowerCase() !== (userProfile?.username || username).toLowerCase() ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetName = viewingUser.displayName || viewingUser.username;
+                    setViewingUser(null);
+                    handleStartDM(targetName, viewingUser.username);
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 transition cursor-pointer active:scale-98"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>Nhắn tin trực tiếp</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewingUser(null);
+                    handleOpenProfileModal();
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium text-xs flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span>Cài đặt tài khoản của bạn</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
