@@ -17,12 +17,14 @@ import { extname, join } from 'path';
 import * as fs from 'fs';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Controller('chat')
 export class ChatController {
   constructor(
     private chatService: ChatService,
     private chatGateway: ChatGateway,
+    private cloudinaryService: CloudinaryService,
   ) {}
 
   @Post('upload')
@@ -60,12 +62,11 @@ export class ChatController {
       originalName = file.originalname;
     }
 
-    const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || 'http://localhost:8000';
-    const fileUrl = `${baseUrl}/uploads/chat/${file.filename}`;
+    const uploadRes = await this.cloudinaryService.uploadFile(file, 'chat');
 
     return {
       success: true,
-      fileUrl,
+      fileUrl: uploadRes.fileUrl,
       fileName: originalName,
       fileType: file.mimetype || 'application/octet-stream',
       fileSize: file.size,

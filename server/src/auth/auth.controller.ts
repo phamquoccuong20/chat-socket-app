@@ -14,10 +14,14 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import * as fs from 'fs';
 import { AuthService } from './auth.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private cloudinaryService: CloudinaryService,
+  ) {}
 
   // API upload file avatar vào thư mục uploads/avatars/
   @Post('upload-avatar')
@@ -55,11 +59,10 @@ export class AuthController {
     if (!file) {
       throw new BadRequestException('Không tìm thấy file ảnh tải lên!');
     }
-    const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || 'http://localhost:8000';
-    const avatarUrl = `${baseUrl}/uploads/avatars/${file.filename}`;
+    const uploadRes = await this.cloudinaryService.uploadFile(file, 'avatars');
     return {
       success: true,
-      avatarUrl,
+      avatarUrl: uploadRes.fileUrl,
       filename: file.filename,
     };
   }
