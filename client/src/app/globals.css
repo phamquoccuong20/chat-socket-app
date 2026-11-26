@@ -103,23 +103,31 @@ body {
 .light-mode .bg-slate-900,
 .light-mode .bg-slate-900\/90,
 .light-mode .bg-slate-900\/80,
+.light-mode .bg-slate-900\/70,
 .light-mode .bg-slate-900\/60,
+.light-mode .bg-slate-900\/50,
 .light-mode .bg-slate-900\/40,
 .light-mode .bg-slate-950,
+.light-mode .bg-slate-950\/90,
 .light-mode .bg-slate-950\/80,
 .light-mode .bg-slate-950\/70,
+.light-mode .bg-slate-950\/60,
 .light-mode .bg-slate-950\/50 {
-  background-color: #f0f2f5 !important;
+  background-color: #f1f5f9 !important;
   color: #0f172a !important;
+  border-color: #e2e8f0 !important;
 }
 
 .light-mode .bg-slate-800,
 .light-mode .bg-slate-800\/90,
 .light-mode .bg-slate-800\/80,
+.light-mode .bg-slate-800\/70,
 .light-mode .bg-slate-800\/60,
+.light-mode .bg-slate-800\/50,
 .light-mode .bg-slate-800\/40 {
-  background-color: #f0f2f5 !important;
-  color: #374151 !important;
+  background-color: #f1f5f9 !important;
+  color: #1e293b !important;
+  border-color: #e2e8f0 !important;
 }
 
 /* 3. Viền (Borders) mềm mại chuẩn Messenger */
@@ -333,8 +341,45 @@ body {
 }
 
 /* 9. Thao tác hover & Dropdown Menus */
-.light-mode .shadow-2xl {
+.light-mode .shadow-2xl,
+.light-mode .shadow-xl {
   box-shadow: 0 12px 28px 0 rgba(0, 0, 0, 0.12), 0 2px 4px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Đảm bảo khi di chuột (hover) trong Light Mode luôn là màu sáng nhẹ, không bao giờ bị biến thành đen/xám tối */
+.light-mode .hover\:bg-slate-800:hover,
+.light-mode .hover\:bg-slate-800\/90:hover,
+.light-mode .hover\:bg-slate-800\/80:hover,
+.light-mode .hover\:bg-slate-800\/70:hover,
+.light-mode .hover\:bg-slate-800\/60:hover,
+.light-mode .hover\:bg-slate-800\/50:hover,
+.light-mode .hover\:bg-slate-800\/40:hover,
+.light-mode .hover\:bg-slate-700:hover,
+.light-mode .hover\:bg-slate-700\/90:hover,
+.light-mode .hover\:bg-slate-700\/80:hover,
+.light-mode .hover\:bg-slate-700\/60:hover,
+.light-mode .hover\:bg-slate-700\/50:hover,
+.light-mode .hover\:bg-slate-900:hover,
+.light-mode .hover\:bg-slate-900\/90:hover,
+.light-mode .hover\:bg-slate-900\/80:hover,
+.light-mode .hover\:bg-slate-900\/60:hover,
+.light-mode .hover\:bg-slate-900\/50:hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.light-mode .hover\:bg-slate-800:hover > span,
+.light-mode .hover\:bg-slate-800\/80:hover > span,
+.light-mode .hover\:bg-slate-800\/60:hover > span,
+.light-mode .hover\:bg-slate-700:hover > span,
+.light-mode .hover\:bg-slate-900:hover > span {
+  color: #0f172a !important;
+}
+
+.light-mode button:not(.bg-indigo-600):not(.bg-indigo-500):not(.bg-purple-600):not(.bg-emerald-600):not(.bg-rose-600):not(.bg-blue-600):not([type="submit"]).hover\:text-white:hover,
+.light-mode div:not(.bg-indigo-600):not(.bg-purple-600):not(.bg-emerald-600).hover\:text-white:hover,
+.light-mode span.hover\:text-white:hover {
+  color: #0f172a !important;
 }
 
 .light-mode button[title="Trả lời tin nhắn này"] {

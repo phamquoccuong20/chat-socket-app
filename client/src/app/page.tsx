@@ -345,6 +345,10 @@ export default function ChatApp() {
   usernameRef.current = username;
   const userProfileRef = useRef(userProfile);
   userProfileRef.current = userProfile;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const dmTargetUserRef = useRef(dmTargetUser);
+  dmTargetUserRef.current = dmTargetUser;
 
   // Quản lý tắt/bật thông báo cho từng phòng/cuộc trò chuyện
   const [mutedRooms, setMutedRooms] = useState<string[]>([]);
@@ -471,13 +475,22 @@ export default function ChatApp() {
     });
 
     socketInstance.on("roomHistory", (data: { roomId: string; messages: Message[] }) => {
-      // Chỉ nạp tin nhắn nếu lịch sử trả về đúng phòng đang mở hiện tại
-      if (data.roomId === currentRoomRef.current) {
+      // Chỉ nạp tin nhắn nếu lịch sử trả về đúng phòng đang mở hiện tại hoặc cùng là phòng DM tương ứng
+      const isMatch =
+        data.roomId === currentRoomRef.current ||
+        (data.roomId.startsWith("dm_") && currentRoomRef.current.startsWith("dm_"));
+
+      if (isMatch) {
+        // Đồng bộ currentRoom sang roomId chuẩn từ server nếu có sự khác biệt
+        if (data.roomId.startsWith("dm_") && data.roomId !== currentRoomRef.current) {
+          setCurrentRoom(data.roomId);
+          currentRoomRef.current = data.roomId;
+        }
         setMessages((prev) => {
           if (prev.length === 0) return data.messages;
           // Merge lịch sử với tin nhắn hiện có theo ID để không bao giờ bị mất tin nhắn vừa nhận
           const existingIds = new Set(data.messages.map((m) => m.id));
-          const unsynced = prev.filter((m) => !existingIds.has(m.id) && m.roomId === data.roomId);
+          const unsynced = prev.filter((m) => !existingIds.has(m.id));
           const combined = [...data.messages, ...unsynced];
           combined.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
           return combined;
@@ -492,7 +505,13 @@ export default function ChatApp() {
         loadUserConversations(usernameRef.current);
       }
       setMessages((prev) => {
-        if (msg.roomId === currentRoomRef.current) {
+        const isCurrent =
+          msg.roomId === currentRoomRef.current ||
+          (msg.roomId.startsWith("dm_") &&
+            currentRoomRef.current.startsWith("dm_") &&
+            activeTabRef.current === "dm");
+
+        if (isCurrent) {
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
         }
@@ -503,7 +522,13 @@ export default function ChatApp() {
       if (msg.fileUrl && !msg.isRevoked) {
         setRoomMedia((prev) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
-          if (msg.roomId === currentRoomRef.current) {
+          const isCurrent =
+            msg.roomId === currentRoomRef.current ||
+            (msg.roomId.startsWith("dm_") &&
+              currentRoomRef.current.startsWith("dm_") &&
+              activeTabRef.current === "dm");
+
+          if (isCurrent) {
             return [msg, ...prev];
           }
           return prev;
@@ -533,7 +558,13 @@ export default function ChatApp() {
     socketInstance.on(
       "directMessageNotification",
       (data: { sender: string; content: string; roomId: string }) => {
-        if (currentRoomRef.current !== data.roomId) {
+        const isCurrentlyViewing =
+          activeTabRef.current === "dm" &&
+          (currentRoomRef.current === data.roomId ||
+            (currentRoomRef.current.startsWith("dm_") && data.roomId.startsWith("dm_")) ||
+            dmTargetUserRef.current === data.sender);
+
+        if (!isCurrentlyViewing) {
           setUnreadDMs((prev) => ({
             ...prev,
             [data.sender]: (prev[data.sender] || 0) + 1,
@@ -947,14 +978,34 @@ export default function ChatApp() {
   ) => {
     if (!socket || targetDisplayName === username) return;
     const myUsername = userProfile?.username || username;
-    const otherUsername = targetUsername || targetDisplayName;
+
+    const foundContact =
+      conversations.find(
+        (c) =>
+          (targetUsername && c.contactUser?.username === targetUsername) ||
+          c.contactUser?.displayName === targetDisplayName ||
+          c.contactName === targetDisplayName ||
+          (targetUsername && c.contactName === targetUsername)
+      ) ||
+      savedContacts.find(
+        (c: any) =>
+          (targetUsername && c.username === targetUsername) ||
+          c.displayName === targetDisplayName ||
+          c.username === targetDisplayName
+      );
+
+    const otherUsername =
+      targetUsername ||
+      (foundContact as any)?.contactUser?.username ||
+      (foundContact as any)?.username ||
+      targetDisplayName;
 
     const existingConv = conversations.find(
       (c) =>
         c.contactName === targetDisplayName ||
-        c.contactName === targetUsername ||
+        (targetUsername && c.contactName === targetUsername) ||
         c.contactUser?.displayName === targetDisplayName ||
-        c.contactUser?.username === targetUsername
+        (targetUsername && c.contactUser?.username === targetUsername)
     );
 
     const dmRoom =
@@ -2675,12 +2726,24 @@ export default function ChatApp() {
     const existingKey = findExistingKey(onlineUser);
     if (!existingKey) {
       const normKey = normalizeKey(onlineUser);
+      const matchedContact = savedContacts.find(
+        (c: any) => normalizeKey(c.username) === normKey || normalizeKey(c.displayName) === normKey
+      );
+      const matchedConv = conversations.find(
+        (c) =>
+          normalizeKey(c.contactUser?.username) === normKey ||
+          normalizeKey(c.contactUser?.displayName) === normKey ||
+          normalizeKey(c.contactName) === normKey
+      );
+      const resolvedUsername = (matchedContact as any)?.username || matchedConv?.contactUser?.username || onlineUser;
+      const resolvedDisplayName = (matchedContact as any)?.displayName || matchedConv?.contactUser?.displayName || onlineUser;
+
       dmMap.set(normKey, {
-        name: onlineUser,
-        displayName: onlineUser,
-        username: onlineUser,
-        avatarUrl: null,
-        roomId: getDmRoomId(userProfile?.username || username, onlineUser),
+        name: resolvedDisplayName,
+        displayName: resolvedDisplayName,
+        username: resolvedUsername,
+        avatarUrl: (matchedContact as any)?.avatarUrl || matchedConv?.contactUser?.avatarUrl || null,
+        roomId: matchedConv?.roomId || getDmRoomId(userProfile?.username || username, resolvedUsername),
         lastMessage: null,
       });
     }
@@ -2823,7 +2886,7 @@ export default function ChatApp() {
                 className={`w-9 h-9 rounded-xl border flex items-center justify-center transition cursor-pointer shadow-sm ${
                   showSidebarQuickMenu
                     ? "bg-indigo-600 text-white border-indigo-500 shadow-indigo-600/30"
-                    : "bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 hover:border-slate-700"
+                    : "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/80 dark:hover:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
                 }`}
                 title="Tạo nhóm hoặc Thêm bạn bè"
               >
@@ -2834,7 +2897,7 @@ export default function ChatApp() {
               {showSidebarQuickMenu && (
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-48 bg-[#161b22] border border-slate-700/90 rounded-2xl p-1.5 shadow-2xl z-50 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100"
+                  className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-48 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/90 rounded-2xl p-1.5 shadow-2xl z-50 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100"
                 >
                   <button
                     type="button"
@@ -2842,9 +2905,9 @@ export default function ChatApp() {
                       setShowSidebarQuickMenu(false);
                       handleOpenCreateGroup();
                     }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 rounded-xl transition cursor-pointer text-left"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-xl transition cursor-pointer text-left"
                   >
-                    <div className="w-6 h-6 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                    <div className="w-6 h-6 rounded-lg bg-indigo-500/20 text-indigo-500 dark:text-indigo-400 flex items-center justify-center shrink-0">
                       <Users className="w-3.5 h-3.5" />
                     </div>
                     <span>Tạo nhóm chat mới</span>
@@ -2856,9 +2919,9 @@ export default function ChatApp() {
                       setShowSidebarQuickMenu(false);
                       setShowSearchFriendModal(true);
                     }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 rounded-xl transition cursor-pointer text-left"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-xl transition cursor-pointer text-left"
                   >
-                    <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                    <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
                       <UserPlus className="w-3.5 h-3.5" />
                     </div>
                     <span>Tìm & thêm bạn bè</span>
@@ -3330,8 +3393,8 @@ export default function ChatApp() {
                   }}
                   className={`p-2 rounded-xl transition cursor-pointer border ${
                     showRoomMenu
-                      ? "bg-slate-800 text-white border-slate-700"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800/80 border-transparent hover:border-slate-800"
+                      ? "bg-slate-200 text-slate-900 border-slate-300 dark:bg-slate-800 dark:text-white dark:border-slate-700"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 border-transparent hover:border-slate-200 dark:hover:border-slate-800"
                   }`}
                   title="Tùy chọn kênh"
                 >
@@ -3341,11 +3404,11 @@ export default function ChatApp() {
                 {showRoomMenu && (
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute right-0 top-full mt-2 w-56 bg-[#161b22] border border-slate-700/90 rounded-2xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl"
+                    className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/90 rounded-2xl shadow-xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl"
                   >
-                    <div className="px-3.5 py-2 border-b border-slate-800/80 mb-1">
-                      <div className="text-xs font-semibold text-white truncate">{activeChannelObj.name}</div>
-                      <div className="text-[10px] text-slate-400">Kênh cộng đồng</div>
+                    <div className="px-3.5 py-2 border-b border-slate-100 dark:border-slate-800/80 mb-1">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">{activeChannelObj.name}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Kênh cộng đồng</div>
                     </div>
 
                     <button
@@ -3354,16 +3417,16 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleToggleMuteRoom(activeChannelObj.id, activeChannelObj.name);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
                       {mutedRooms.includes(activeChannelObj.id) ? (
                         <>
-                          <Bell className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <Bell className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
                           <span>Bật thông báo</span>
                         </>
                       ) : (
                         <>
-                          <BellOff className="w-4 h-4 text-amber-400 shrink-0" />
+                          <BellOff className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
                           <span>Tắt thông báo</span>
                         </>
                       )}
@@ -3375,9 +3438,9 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         setShowMediaDrawer(true);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
-                      <FolderOpen className="w-4 h-4 text-sky-400 shrink-0" />
+                      <FolderOpen className="w-4 h-4 text-sky-500 dark:text-sky-400 shrink-0" />
                       <span>Kho lưu trữ ảnh & file</span>
                     </button>
                   </div>
@@ -3396,8 +3459,8 @@ export default function ChatApp() {
                   }}
                   className={`p-2 rounded-xl transition cursor-pointer border ${
                     showRoomMenu
-                      ? "bg-slate-800 text-white border-slate-700"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800/80 border-transparent hover:border-slate-800"
+                      ? "bg-slate-200 text-slate-900 border-slate-300 dark:bg-slate-800 dark:text-white dark:border-slate-700"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 border-transparent hover:border-slate-200 dark:hover:border-slate-800"
                   }`}
                   title="Tùy chọn nhóm"
                 >
@@ -3407,11 +3470,11 @@ export default function ChatApp() {
                 {showRoomMenu && (
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute right-0 top-full mt-2 w-60 bg-[#161b22] border border-slate-700/90 rounded-2xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl"
+                    className="absolute right-0 top-full mt-2 w-60 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/90 rounded-2xl shadow-xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl"
                   >
-                    <div className="px-3.5 py-2 border-b border-slate-800/80 mb-1">
-                      <div className="text-xs font-semibold text-white truncate">{activeChannelObj.name}</div>
-                      <div className="text-[10px] text-slate-400">{activeChannelObj.memberCount || 1} thành viên</div>
+                    <div className="px-3.5 py-2 border-b border-slate-100 dark:border-slate-800/80 mb-1">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">{activeChannelObj.name}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">{activeChannelObj.memberCount || 1} thành viên</div>
                     </div>
 
                     <button
@@ -3420,9 +3483,9 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleOpenEditGroupModal();
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
-                      <Camera className="w-4 h-4 text-purple-400 shrink-0" />
+                      <Camera className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" />
                       <span>Đổi tên & ảnh nhóm</span>
                     </button>
 
@@ -3432,9 +3495,9 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleViewGroupMembers();
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
-                      <Users className="w-4 h-4 text-indigo-400 shrink-0" />
+                      <Users className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
                       <span>Xem danh sách thành viên</span>
                     </button>
 
@@ -3444,9 +3507,9 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleOpenAddMemberModal();
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
-                      <UserPlus className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <UserPlus className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
                       <span>Thêm thành viên mới</span>
                     </button>
 
@@ -3456,16 +3519,16 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleToggleMuteRoom(activeChannelObj.id, activeChannelObj.name);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
                       {mutedRooms.includes(activeChannelObj.id) ? (
                         <>
-                          <Bell className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <Bell className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
                           <span>Bật thông báo</span>
                         </>
                       ) : (
                         <>
-                          <BellOff className="w-4 h-4 text-amber-400 shrink-0" />
+                          <BellOff className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
                           <span>Tắt thông báo</span>
                         </>
                       )}
@@ -3477,13 +3540,13 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         setShowMediaDrawer(true);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
-                      <FolderOpen className="w-4 h-4 text-sky-400 shrink-0" />
+                      <FolderOpen className="w-4 h-4 text-sky-500 dark:text-sky-400 shrink-0" />
                       <span>Kho lưu trữ ảnh & file</span>
                     </button>
 
-                    <div className="my-1 border-t border-slate-800/80" />
+                    <div className="my-1 border-t border-slate-100 dark:border-slate-800/80" />
 
                     <button
                       type="button"
@@ -3491,9 +3554,9 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleConfirmLeaveGroup(activeChannelObj.id, activeChannelObj.name);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-amber-400 hover:bg-amber-500/10 transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition cursor-pointer text-left"
                     >
-                      <LogOut className="w-4 h-4 text-amber-400 shrink-0" />
+                      <LogOut className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
                       <span>Rời khỏi nhóm này</span>
                     </button>
 
@@ -3503,9 +3566,9 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleConfirmDeleteGroup(activeChannelObj.id, activeChannelObj.name);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition cursor-pointer text-left"
                     >
-                      <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                      <Trash2 className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0" />
                       <span>Xóa toàn bộ nhóm chat</span>
                     </button>
                   </div>
@@ -3524,8 +3587,8 @@ export default function ChatApp() {
                   }}
                   className={`p-2 rounded-xl transition cursor-pointer border ${
                     showRoomMenu
-                      ? "bg-slate-800 text-white border-slate-700"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800/80 border-transparent hover:border-slate-800"
+                      ? "bg-slate-200 text-slate-900 border-slate-300 dark:bg-slate-800 dark:text-white dark:border-slate-700"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 border-transparent hover:border-slate-200 dark:hover:border-slate-800"
                   }`}
                   title="Tùy chọn cuộc trò chuyện"
                 >
@@ -3535,11 +3598,11 @@ export default function ChatApp() {
                 {showRoomMenu && (
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute right-0 top-full mt-2 w-56 bg-[#161b22] border border-slate-700/90 rounded-2xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl"
+                    className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/90 rounded-2xl shadow-xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl"
                   >
-                    <div className="px-3.5 py-2 border-b border-slate-800/80 mb-1">
-                      <div className="text-xs font-semibold text-white truncate">{dmTargetUser}</div>
-                      <div className="text-[10px] text-slate-400">Trò chuyện riêng tư 1-1</div>
+                    <div className="px-3.5 py-2 border-b border-slate-100 dark:border-slate-800/80 mb-1">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">{dmTargetUser}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Trò chuyện riêng tư 1-1</div>
                     </div>
 
                     <button
@@ -3548,16 +3611,16 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleToggleMuteRoom(currentRoom, dmTargetUser || "cuộc trò chuyện");
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
                       {mutedRooms.includes(currentRoom) ? (
                         <>
-                          <Bell className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <Bell className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
                           <span>Bật thông báo</span>
                         </>
                       ) : (
                         <>
-                          <BellOff className="w-4 h-4 text-amber-400 shrink-0" />
+                          <BellOff className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
                           <span>Tắt thông báo</span>
                         </>
                       )}
@@ -3569,13 +3632,13 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         setShowMediaDrawer(true);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer text-left"
                     >
-                      <FolderOpen className="w-4 h-4 text-sky-400 shrink-0" />
+                      <FolderOpen className="w-4 h-4 text-sky-500 dark:text-sky-400 shrink-0" />
                       <span>Kho lưu trữ ảnh & file</span>
                     </button>
 
-                    <div className="my-1 border-t border-slate-800/80" />
+                    <div className="my-1 border-t border-slate-100 dark:border-slate-800/80" />
 
                     <button
                       type="button"
@@ -3583,9 +3646,9 @@ export default function ChatApp() {
                         setShowRoomMenu(false);
                         handleConfirmDeleteConversation(currentRoom, dmTargetUser || "");
                       }}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition cursor-pointer text-left"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition cursor-pointer text-left"
                     >
-                      <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                      <Trash2 className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0" />
                       <span>Xóa cuộc trò chuyện</span>
                     </button>
                   </div>
@@ -3628,10 +3691,10 @@ export default function ChatApp() {
                   />
                 </div>
               </button>
-              <button className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition" title="Cuộc gọi thoại (Demo)">
+              <button className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer" title="Cuộc gọi thoại (Demo)">
                 <Phone className="w-4 h-4" />
               </button>
-              <button className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition" title="Cuộc gọi video (Demo)">
+              <button className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition cursor-pointer" title="Cuộc gọi video (Demo)">
                 <Video className="w-4 h-4" />
               </button>
         </div>
@@ -3641,7 +3704,7 @@ export default function ChatApp() {
         {/* Thanh hiển thị tin nhắn đã ghim (Xổ xuống danh sách đầy đủ) */}
         {pinnedMessages.length > 0 && (
           <div className="relative shrink-0 z-20">
-            <div className="bg-[#12161f]/98 border-b border-indigo-500/20 px-6 py-2.5 flex items-center justify-between backdrop-blur-md shadow-sm transition-all">
+            <div className="bg-slate-50 dark:bg-[#12161f]/98 border-b border-indigo-500/20 px-6 py-2.5 flex items-center justify-between backdrop-blur-md shadow-sm transition-all">
               {/* Bấm vào thanh để mở danh sách xổ xuống hoặc cuộn đến tin nhắn */}
               <div
                 onClick={(e) => {
@@ -3651,22 +3714,22 @@ export default function ChatApp() {
                 className="flex items-center gap-3 min-w-0 text-left hover:opacity-90 transition cursor-pointer flex-1 mr-4"
                 title="Bấm để xem danh sách tất cả tin nhắn đã ghim"
               >
-                <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 shadow-sm">
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-500 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-sm">
                   <Pin className="w-4 h-4 fill-indigo-400/20" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[11px] font-bold text-indigo-400 flex items-center gap-1.5">
+                  <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
                     <span>
                       {pinnedMessages.length === 1
                         ? "Tin nhắn đã ghim"
                         : `Tin nhắn đã ghim (${pinnedMessages.length})`}
                     </span>
-                    <span className="text-slate-500 font-normal">•</span>
-                    <span className="text-slate-300 font-medium">
+                    <span className="text-slate-400 dark:text-slate-500 font-normal">•</span>
+                    <span className="text-slate-700 dark:text-slate-300 font-medium">
                       {pinnedMessages[pinnedMessages.length - 1].sender}
                     </span>
                   </div>
-                  <div className="text-xs text-slate-300 truncate">
+                  <div className="text-xs text-slate-600 dark:text-slate-300 truncate">
                     {pinnedMessages[pinnedMessages.length - 1].content}
                   </div>
                 </div>
@@ -3682,15 +3745,15 @@ export default function ChatApp() {
                   }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition cursor-pointer shadow-sm ${
                     showPinnedDropdown
-                      ? "bg-indigo-600/20 border-indigo-500/40 text-indigo-300"
-                      : "bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white"
+                      ? "bg-indigo-600/20 border-indigo-500/40 text-indigo-700 dark:text-indigo-300"
+                      : "bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
                   }`}
                   title="Xem tất cả tin nhắn đã ghim"
                 >
                   <span>{pinnedMessages.length} tin ghim</span>
                   <ChevronDown
                     className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                      showPinnedDropdown ? "rotate-180 text-indigo-400" : ""
+                      showPinnedDropdown ? "rotate-180 text-indigo-600 dark:text-indigo-400" : ""
                     }`}
                   />
                 </button>
@@ -3701,19 +3764,19 @@ export default function ChatApp() {
             {showPinnedDropdown && (
               <div
                 onClick={(e) => e.stopPropagation()}
-                className="absolute top-full left-0 right-0 bg-[#161b22]/98 border-b border-slate-700/80 shadow-2xl backdrop-blur-xl z-30 max-h-80 overflow-y-auto divide-y divide-slate-800/80 animate-in fade-in slide-in-from-top-2 duration-150"
+                className="absolute top-full left-0 right-0 bg-white/98 dark:bg-[#161b22]/98 border-b border-slate-200 dark:border-slate-700/80 shadow-2xl backdrop-blur-xl z-30 max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80 animate-in fade-in slide-in-from-top-2 duration-150"
               >
-                <div className="px-6 py-2.5 bg-slate-900/90 flex items-center justify-between text-xs font-semibold text-slate-300">
+                <div className="px-6 py-2.5 bg-slate-50 dark:bg-slate-900/90 flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300">
                   <div className="flex items-center gap-2">
-                    <Pin className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                    <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500 dark:text-amber-400 dark:fill-amber-400" />
                     <span>Danh sách tin nhắn đã ghim ({pinnedMessages.length})</span>
                   </div>
-                  <span className="text-[11px] text-slate-500 font-normal">
+                  <span className="text-[11px] text-slate-400 dark:text-slate-500 font-normal">
                     Bấm vào tin nhắn để cuộn đến
                   </span>
                 </div>
 
-                <div className="divide-y divide-slate-800/60">
+                <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
                   {pinnedMessages.map((msg, idx) => (
                     <div
                       key={msg.id}
@@ -3728,23 +3791,23 @@ export default function ChatApp() {
                         }
                         setShowPinnedDropdown(false);
                       }}
-                      className="px-6 py-3 hover:bg-slate-800/60 transition flex items-start justify-between gap-4 group cursor-pointer"
+                      className="px-6 py-3 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition flex items-start justify-between gap-4 group cursor-pointer"
                     >
                       <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <div className="w-6 h-6 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold border border-amber-500/20">
+                        <div className="w-6 h-6 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold border border-amber-500/20">
                           {idx + 1}
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-semibold text-white">{msg.sender}</span>
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-xs font-semibold text-slate-900 dark:text-white">{msg.sender}</span>
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500">
                               {new Date(msg.createdAt).toLocaleTimeString([], {
                                 hour: "2-digit",
                                 minute: "2-digit",
                               })}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">
+                          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-2">
                             {msg.content}
                           </p>
                         </div>
@@ -3757,7 +3820,7 @@ export default function ChatApp() {
                           e.stopPropagation();
                           handleTogglePin(msg.id);
                         }}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition cursor-pointer shrink-0"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition cursor-pointer shrink-0"
                         title="Bỏ ghim tin nhắn này"
                       >
                         <PinOff className="w-4 h-4" />
@@ -3964,7 +4027,7 @@ export default function ChatApp() {
                                 onClick={(e) => e.stopPropagation()}
                                 className={`absolute bottom-full mb-1.5 ${
                                   isMe ? "right-0" : "left-0"
-                                } bg-[#161b22] border border-slate-700/80 rounded-2xl p-1 shadow-2xl flex items-center gap-1 z-30 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100`}
+                                } bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/80 rounded-2xl p-1 shadow-2xl flex items-center gap-1 z-30 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100`}
                               >
                                 {["👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👏"].map((emoji) => {
                                   const hasReacted = Boolean(msg.reactions?.[emoji]?.includes(username));
@@ -3977,7 +4040,7 @@ export default function ChatApp() {
                                         setActiveReactionMessageId(null);
                                       }}
                                       className={`text-lg p-1.5 rounded-xl transition cursor-pointer hover:scale-125 ${
-                                        hasReacted ? "bg-indigo-500/25 scale-110" : "hover:bg-slate-800/80"
+                                        hasReacted ? "bg-indigo-500/25 scale-110" : "hover:bg-slate-100 dark:hover:bg-slate-800/80"
                                       }`}
                                       title={`Thả ${emoji}`}
                                     >
@@ -3993,10 +4056,10 @@ export default function ChatApp() {
                           <button
                             type="button"
                             onClick={() => handleReplyMessage(msg)}
-                            className="p-1.5 rounded-lg border border-slate-800 bg-slate-900/90 text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer shadow-sm transition opacity-0 group-hover:opacity-100"
+                            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shadow-sm transition opacity-0 group-hover:opacity-100"
                             title="Trả lời tin nhắn này"
                           >
-                            <Reply className="w-3.5 h-3.5" />
+                            <Reply className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
                           </button>
 
                           {/* Nút 3 chấm mở Menu Tùy chọn */}
@@ -4007,9 +4070,9 @@ export default function ChatApp() {
                                 e.stopPropagation();
                                 setActiveMenuMessageId((prev) => (prev === msg.id ? null : msg.id));
                               }}
-                              className={`p-1.5 rounded-lg border border-slate-800 bg-slate-900/90 text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer shadow-sm transition ${
+                              className={`p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shadow-sm transition ${
                                 activeMenuMessageId === msg.id
-                                  ? "opacity-100 text-white bg-slate-800"
+                                  ? "opacity-100 text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800"
                                   : "opacity-0 group-hover:opacity-100"
                               }`}
                               title="Tùy chọn tin nhắn"
@@ -4023,15 +4086,15 @@ export default function ChatApp() {
                                 onClick={(e) => e.stopPropagation()}
                                 className={`absolute bottom-full mb-1.5 ${
                                   isMe ? "right-0" : "left-0"
-                                } w-44 bg-[#161b22] border border-slate-700/80 rounded-2xl p-1.5 shadow-2xl z-30 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100`}
+                                } w-44 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/80 rounded-2xl p-1.5 shadow-2xl z-30 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100`}
                               >
                                 {/* 0. Trả lời tin nhắn */}
                                 <button
                                   type="button"
                                   onClick={() => handleReplyMessage(msg)}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 rounded-xl transition cursor-pointer"
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-xl transition cursor-pointer text-left"
                                 >
-                                  <Reply className="w-3.5 h-3.5 text-indigo-400" />
+                                  <Reply className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
                                   <span>Trả lời tin nhắn</span>
                                 </button>
 
@@ -4042,9 +4105,9 @@ export default function ChatApp() {
                                     handleCopyMessage(msg.id, msg.content);
                                     setActiveMenuMessageId(null);
                                   }}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 rounded-xl transition cursor-pointer"
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-xl transition cursor-pointer text-left"
                                 >
-                                  <Copy className="w-3.5 h-3.5 text-slate-400" />
+                                  <Copy className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                                   <span>Sao chép tin nhắn</span>
                                 </button>
 
@@ -4055,16 +4118,16 @@ export default function ChatApp() {
                                     handleTogglePin(msg.id);
                                     setActiveMenuMessageId(null);
                                   }}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 rounded-xl transition cursor-pointer"
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-xl transition cursor-pointer text-left"
                                 >
                                   {msg.isPinned ? (
                                     <>
-                                      <PinOff className="w-3.5 h-3.5 text-amber-400" />
-                                      <span className="text-amber-300">Bỏ ghim tin nhắn</span>
+                                      <PinOff className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
+                                      <span className="text-amber-600 dark:text-amber-300">Bỏ ghim tin nhắn</span>
                                     </>
                                   ) : (
                                     <>
-                                      <Pin className="w-3.5 h-3.5 text-slate-400" />
+                                      <Pin className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                                       <span>Ghim tin nhắn</span>
                                     </>
                                   )}
@@ -4073,16 +4136,16 @@ export default function ChatApp() {
                                 {/* 3. Thu hồi (chỉ áp dụng cho người gửi) */}
                                 {isMe && (
                                   <>
-                                    <div className="my-1 border-t border-slate-800/80" />
+                                    <div className="my-1 border-t border-slate-100 dark:border-slate-800/80" />
                                     <button
                                       type="button"
                                       onClick={() => {
                                         setRevokeTargetMessageId(msg.id);
                                         setActiveMenuMessageId(null);
                                       }}
-                                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition cursor-pointer"
+                                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-xl transition cursor-pointer text-left"
                                     >
-                                      <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                                      <RotateCcw className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
                                       <span>Thu hồi tin nhắn</span>
                                     </button>
                                   </>
@@ -4308,13 +4371,13 @@ export default function ChatApp() {
         <div className="p-4 bg-[#161b22]/70 border-t border-slate-800/80 shrink-0 transition-colors duration-300 ease-in-out">
           <div className="relative max-w-5xl mx-auto">
             {showEmojiPicker && (
-              <div className="absolute bottom-14 left-0 bg-slate-900 border border-slate-800 rounded-2xl p-3 shadow-2xl flex gap-2 backdrop-blur-xl z-20">
+              <div className="absolute bottom-14 left-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 shadow-2xl flex gap-2 backdrop-blur-xl z-20">
                 {["👍", "❤️", "😂", "🎉", "🔥", "🚀", "😍", "👏", "💯", "✨"].map((emoji) => (
                   <button
                     key={emoji}
                     type="button"
                     onClick={() => addEmoji(emoji)}
-                    className="text-lg hover:scale-125 transition p-1.5 rounded-lg hover:bg-slate-800"
+                    className="text-lg hover:scale-125 transition p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     {emoji}
                   </button>
@@ -4324,20 +4387,20 @@ export default function ChatApp() {
 
             {/* Thanh hiển thị tin nhắn đang trả lời */}
             {replyingMessage && (
-              <div className="flex items-center justify-between px-3.5 py-2 mb-2 bg-[#161b22] border border-indigo-500/40 rounded-2xl shadow-lg animate-in slide-in-from-bottom-2 duration-150 backdrop-blur-md">
+              <div className="flex items-center justify-between px-3.5 py-2 mb-2 bg-slate-100/90 dark:bg-[#161b22] border border-indigo-500/40 rounded-2xl shadow-lg animate-in slide-in-from-bottom-2 duration-150 backdrop-blur-md">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-1 h-8 bg-indigo-500 rounded-full shrink-0" />
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-400">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
                       <Reply className="w-3.5 h-3.5" />
                       <span>
                         Đang trả lời{" "}
-                        <strong className="text-white">
+                        <strong className="text-slate-900 dark:text-white">
                           {replyingMessage.sender === username ? "chính bạn" : replyingMessage.sender}
                         </strong>
                       </span>
                     </div>
-                    <div className="text-xs text-slate-400 truncate mt-0.5">
+                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
                       {replyingMessage.isRevoked
                         ? "Tin nhắn đã được thu hồi"
                         : replyingMessage.fileUrl
@@ -4351,7 +4414,7 @@ export default function ChatApp() {
                 <button
                   type="button"
                   onClick={() => setReplyingMessage(null)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer shrink-0"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition cursor-pointer shrink-0"
                   title="Hủy trả lời (Esc)"
                 >
                   <X className="w-4 h-4" />
@@ -4361,10 +4424,10 @@ export default function ChatApp() {
 
             {/* Popup gợi ý tag tên khi gõ @ */}
             {showMentionSuggestions && mentionCandidates.length > 0 && (
-              <div className="absolute bottom-full mb-2 left-0 right-0 sm:right-auto sm:w-80 bg-[#161b22] border border-slate-700/90 rounded-2xl p-1.5 shadow-2xl z-30 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-150 max-h-64 overflow-y-auto">
-                <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 flex items-center justify-between">
+              <div className="absolute bottom-full mb-2 left-0 right-0 sm:right-auto sm:w-80 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/90 rounded-2xl p-1.5 shadow-2xl z-30 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-150 max-h-64 overflow-y-auto">
+                <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
                   <span>Gợi ý nhắc tên (@)</span>
-                  <span className="text-[9px] text-slate-500 font-normal">Dùng ↑ ↓ và Enter</span>
+                  <span className="text-[9px] text-slate-400 dark:text-slate-500 font-normal">Dùng ↑ ↓ và Enter</span>
                 </div>
                 <div className="mt-1 space-y-0.5">
                   {mentionCandidates.map((cand: any, idx: number) => {
@@ -4378,7 +4441,7 @@ export default function ChatApp() {
                         className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition cursor-pointer ${
                           isSelected
                             ? "bg-indigo-600 text-white font-medium"
-                            : "text-slate-300 hover:bg-slate-800/80"
+                            : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-slate-900 dark:hover:text-white"
                         }`}
                       >
                         {cand.isAll ? (
@@ -4396,7 +4459,7 @@ export default function ChatApp() {
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="text-xs truncate font-medium flex items-center gap-1.5">
-                            <span>{cand.isAll ? "@all" : cand.name}</span>
+                            <span className={isSelected ? "text-white" : "text-slate-900 dark:text-white"}>{cand.isAll ? "@all" : cand.name}</span>
                             {cand.isAll && (
                               <span
                                 className={`text-[9px] px-1.5 py-0.2 rounded-full ${
@@ -4563,16 +4626,16 @@ export default function ChatApp() {
 
       {/* 3. SIDEBAR PHẢI: KHO LƯU TRỮ FILE & ẢNH (Zalo-style Media Drawer) */}
       {showMediaDrawer && (
-        <aside className="fixed inset-y-0 right-0 z-40 w-full sm:w-80 md:w-88 xl:w-96 bg-[#161b22] border-l border-slate-800/80 flex flex-col shrink-0 shadow-2xl md:static md:shadow-none animate-in slide-in-from-right duration-200">
+        <aside className="fixed inset-y-0 right-0 z-40 w-full sm:w-80 md:w-88 xl:w-96 bg-white dark:bg-[#161b22] border-l border-slate-200 dark:border-slate-800/80 flex flex-col shrink-0 shadow-2xl md:static md:shadow-none animate-in slide-in-from-right duration-200">
           {/* Header Drawer */}
-          <div className="h-16 px-4 border-b border-slate-800/80 flex items-center justify-between shrink-0">
+          <div className="h-16 px-4 border-b border-slate-200 dark:border-slate-800/80 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/20 shadow-sm">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-200 dark:border-indigo-500/20 shadow-sm">
                 <FolderOpen className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-white truncate">Kho lưu trữ</h3>
-                <p className="text-[11px] text-slate-400 truncate">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white truncate">Kho lưu trữ</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                   {activeTab === "channel" ? activeChannelObj.name : `Với ${dmTargetUser}`}
                 </p>
               </div>
@@ -4580,7 +4643,7 @@ export default function ChatApp() {
             <button
               type="button"
               onClick={() => setShowMediaDrawer(false)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
               title="Đóng kho lưu trữ"
             >
               <X className="w-4 h-4" />
@@ -4588,22 +4651,22 @@ export default function ChatApp() {
           </div>
 
           {/* Tabs chuyển đổi giữa Ảnh và File */}
-          <div className="px-4 pt-3 pb-2 shrink-0 border-b border-slate-800/60">
-            <div className="grid grid-cols-2 gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+          <div className="px-4 pt-3 pb-2 shrink-0 border-b border-slate-200 dark:border-slate-800/60">
+            <div className="grid grid-cols-2 gap-1 bg-slate-100 dark:bg-slate-900/90 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setMediaDrawerTab("photos")}
                 className={`py-1.5 px-3 rounded-lg text-xs font-medium transition cursor-pointer flex items-center justify-center gap-1.5 ${
                   mediaDrawerTab === "photos"
                     ? "bg-indigo-600 text-white shadow-sm"
-                    : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-slate-800/60"
                 }`}
               >
                 <ImageIcon className="w-3.5 h-3.5" />
                 <span>Ảnh / Video</span>
                 <span
                   className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                    mediaDrawerTab === "photos" ? "bg-white/20 text-white" : "bg-slate-800 text-slate-400"
+                    mediaDrawerTab === "photos" ? "bg-white/20 text-white" : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-400"
                   }`}
                 >
                   {mediaPhotos.length}
@@ -4616,14 +4679,14 @@ export default function ChatApp() {
                 className={`py-1.5 px-3 rounded-lg text-xs font-medium transition cursor-pointer flex items-center justify-center gap-1.5 ${
                   mediaDrawerTab === "files"
                     ? "bg-indigo-600 text-white shadow-sm"
-                    : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-slate-800/60"
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
                 <span>Tài liệu</span>
                 <span
                   className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                    mediaDrawerTab === "files" ? "bg-white/20 text-white" : "bg-slate-800 text-slate-400"
+                    mediaDrawerTab === "files" ? "bg-white/20 text-white" : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-400"
                   }`}
                 >
                   {mediaFiles.length}
@@ -4633,7 +4696,7 @@ export default function ChatApp() {
 
             {/* Thanh tìm kiếm nhanh trong Kho lưu trữ */}
             <div className="relative mt-2.5">
-              <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+              <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
               <input
                 type="text"
                 placeholder={
@@ -4641,13 +4704,13 @@ export default function ChatApp() {
                 }
                 value={mediaSearchQuery}
                 onChange={(e) => setMediaSearchQuery(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8.5 pr-8 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-8.5 pr-8 py-1.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
               />
               {mediaSearchQuery && (
                 <button
                   type="button"
                   onClick={() => setMediaSearchQuery("")}
-                  className="absolute right-2.5 top-2.5 text-slate-500 hover:text-white transition"
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -4844,7 +4907,7 @@ export default function ChatApp() {
                   return (
                     <div
                       key={user.id}
-                      className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition"
+                      className="flex items-center justify-between p-3 rounded-2xl bg-slate-100/90 dark:bg-slate-900/80 border border-slate-200/90 dark:border-slate-800 hover:bg-slate-200/70 dark:hover:border-slate-700 transition"
                     >
                       <div
                         onClick={() => handleViewUserProfile(user.username || user.displayName)}
@@ -4860,18 +4923,18 @@ export default function ChatApp() {
                             {renderAvatarContent(user.avatarUrl, targetName, "md")}
                           </div>
                           <span
-                            className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#161b22] ${
-                              isOnline ? "bg-emerald-500" : "bg-slate-500"
+                            className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-[#161b22] ${
+                              isOnline ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-500"
                             }`}
                           ></span>
                     </div>
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5 group-hover:text-indigo-300 transition">
+                          <div className="text-sm font-semibold text-slate-900 dark:text-white truncate flex items-center gap-1.5 group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition">
                             <span>{user.displayName}</span>
                             <span className="text-[10px] text-slate-500 font-normal">@{user.username}</span>
                       </div>
                           {user.phone ? (
-                            <div className="text-xs text-indigo-400 flex items-center gap-1 mt-0.5">
+                            <div className="text-xs text-indigo-600 dark:text-indigo-400 flex items-center gap-1 mt-0.5 font-medium">
                               <Phone className="w-3 h-3" />
                               <span>{user.phone}</span>
                         </div>
@@ -5591,11 +5654,11 @@ export default function ChatApp() {
       {/* MODAL XEM DANH SÁCH THÀNH VIÊN NHÓM */}
       {showGroupMembersModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-[#161b22] border border-slate-800 rounded-3xl p-6 shadow-2xl relative flex flex-col max-h-[85vh]">
+          <div className="w-full max-w-md bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl relative flex flex-col max-h-[85vh]">
             <button
               type="button"
               onClick={() => setShowGroupMembersModal(false)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition cursor-pointer"
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-700 dark:hover:text-white p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -5605,8 +5668,8 @@ export default function ChatApp() {
                 <Users className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Thành viên trong nhóm</h3>
-                <p className="text-xs text-slate-400">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Thành viên trong nhóm</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   {currentGroupMembers.length} người đang tham gia
                 </p>
               </div>
@@ -5642,7 +5705,7 @@ export default function ChatApp() {
                     return (
                       <div
                         key={member.id || member.username}
-                        className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-900/50 border border-slate-800/80 gap-2"
+                        className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-100/90 dark:bg-slate-900/50 border border-slate-200/90 dark:border-slate-800/80 gap-2 hover:bg-slate-200/70 dark:hover:bg-slate-900/80 transition"
                       >
                         <div
                           onClick={() => handleViewUserProfile(member.username || member.displayName)}
@@ -5658,30 +5721,30 @@ export default function ChatApp() {
                               {renderAvatarContent(member.avatarUrl, member.displayName || member.username, "sm")}
                             </div>
                             <span
-                              className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#161b22] ${
-                                isOnline ? "bg-emerald-500" : "bg-slate-500"
+                              className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-[#161b22] ${
+                                isOnline ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-500"
                               }`}
                             ></span>
                           </div>
                           <div className="min-w-0">
-                            <div className="text-xs font-semibold text-white flex items-center gap-1.5 flex-wrap">
+                            <div className="text-xs font-semibold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
                               <span className="truncate">{member.displayName || member.username}</span>
                               {member.isLeader && (
                                 <span
-                                  className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 text-[10px] font-medium border border-amber-500/30 flex items-center gap-1 shrink-0 shadow-sm"
+                                  className="px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[10px] font-medium border border-amber-300 dark:border-amber-500/30 flex items-center gap-1 shrink-0 shadow-sm"
                                   title="Trưởng nhóm"
                                 >
-                                  <Crown className="w-2.5 h-2.5 text-amber-400 fill-amber-400/30" />
+                                  <Crown className="w-2.5 h-2.5 text-amber-500 dark:text-amber-400 fill-amber-500/30" />
                                   <span>Trưởng nhóm</span>
                                 </span>
                               )}
                               {isMe && (
-                                <span className="px-1.5 py-0.2 rounded-md bg-indigo-500/20 text-indigo-300 text-[10px] font-medium border border-indigo-500/30 shrink-0">
+                                <span className="px-1.5 py-0.2 rounded-md bg-indigo-100 dark:bg-indigo-500/20 text-indigo-800 dark:text-indigo-300 text-[10px] font-medium border border-indigo-300 dark:border-indigo-500/30 shrink-0">
                                   Bạn
                                 </span>
                               )}
                             </div>
-                            <div className="text-[10px] text-slate-400 truncate">
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                               @{member.username} {member.phone ? `· ${member.phone}` : ""}
                             </div>
                           </div>
@@ -5700,10 +5763,10 @@ export default function ChatApp() {
                                     targetName: member.displayName || member.username,
                                   });
                                 }}
-                                className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                                className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
                                 title="Chuyển quyền trưởng nhóm cho thành viên này"
                               >
-                                <Crown className="w-3 h-3 text-amber-400" />
+                                <Crown className="w-3 h-3 text-amber-500 dark:text-amber-400" />
                                 <span>Chuyển trưởng nhóm</span>
                               </button>
                               <button
@@ -5716,17 +5779,19 @@ export default function ChatApp() {
                                     targetName: member.displayName || member.username,
                                   });
                                 }}
-                                className="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                                className="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
                                 title="Xóa thành viên khỏi nhóm chat"
                               >
-                                <UserMinus className="w-3 h-3 text-rose-400" />
+                                <UserMinus className="w-3 h-3 text-rose-500 dark:text-rose-400" />
                                 <span>Xóa</span>
                               </button>
                             </>
                           )}
                           <span
                             className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                              isOnline ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "text-slate-500"
+                              isOnline
+                                ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-800 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/20"
+                                : "text-slate-400 dark:text-slate-500"
                             }`}
                           >
                             {isOnline ? "Đang online" : "Ngoại tuyến"}
@@ -5739,11 +5804,11 @@ export default function ChatApp() {
               )}
             </div>
 
-            <div className="pt-3 border-t border-slate-800/60">
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800/60">
               <button
                 type="button"
                 onClick={() => setShowGroupMembersModal(false)}
-                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition cursor-pointer"
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer border border-slate-200 dark:border-transparent"
               >
                 Đóng
               </button>
@@ -5991,7 +6056,7 @@ export default function ChatApp() {
           onClick={() => setViewingUser(null)}
         >
           <div
-            className="bg-[#161b22] border border-slate-700/80 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-in zoom-in-95 duration-150"
+            className="bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700/80 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header / Cover banner */}
@@ -5999,7 +6064,7 @@ export default function ChatApp() {
               <button
                 type="button"
                 onClick={() => setViewingUser(null)}
-                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white/80 hover:text-white flex items-center justify-center transition cursor-pointer"
+                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition cursor-pointer"
                 title="Đóng (Esc)"
               >
                 <X className="w-4 h-4" />
@@ -6013,7 +6078,7 @@ export default function ChatApp() {
                   <div
                     className={`w-20 h-20 rounded-2xl bg-gradient-to-tr ${getAvatarGradient(
                       viewingUser.displayName || viewingUser.username
-                    )} flex items-center justify-center font-bold text-white text-2xl shadow-xl ring-4 ring-[#161b22] overflow-hidden`}
+                    )} flex items-center justify-center font-bold text-white text-2xl shadow-xl ring-4 ring-white dark:ring-[#161b22] overflow-hidden`}
                   >
                     {renderAvatarContent(
                       viewingUser.avatarUrl || getSenderAvatar(viewingUser.displayName || viewingUser.username),
@@ -6022,14 +6087,14 @@ export default function ChatApp() {
                     )}
                   </div>
                   <span
-                    className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-[#161b22] ${
+                    className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white dark:border-[#161b22] ${
                       onlineUsers.some(
                         (u) =>
                           u.toLowerCase() === viewingUser.username?.toLowerCase() ||
                           u.toLowerCase() === viewingUser.displayName?.toLowerCase()
                       )
                         ? "bg-emerald-500 ring-2 ring-emerald-500/20"
-                        : "bg-slate-500"
+                        : "bg-slate-400 dark:bg-slate-500"
                     }`}
                     title={
                       onlineUsers.some(
@@ -6051,8 +6116,8 @@ export default function ChatApp() {
                           u.toLowerCase() === viewingUser.username?.toLowerCase() ||
                           u.toLowerCase() === viewingUser.displayName?.toLowerCase()
                       )
-                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                        : "bg-slate-800 text-slate-400 border-slate-700/60"
+                        ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-800 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/20"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700/60"
                     }`}
                   >
                     {onlineUsers.some(
@@ -6068,26 +6133,26 @@ export default function ChatApp() {
 
               {/* Tên & Username */}
               <div className="mb-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <span>{viewingUser.displayName || viewingUser.username}</span>
                   {viewingUser.username?.toLowerCase() === (userProfile?.username || username).toLowerCase() && (
-                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-500/20 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
                       Bạn
                     </span>
                   )}
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">@{viewingUser.username}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">@{viewingUser.username}</p>
               </div>
 
               {/* Thông tin chi tiết */}
-              <div className="space-y-2.5 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3.5 mb-4">
+              <div className="space-y-2.5 bg-slate-100/90 dark:bg-slate-900/60 border border-slate-200/90 dark:border-slate-800/80 rounded-2xl p-3.5 mb-4">
                 {/* Số điện thoại */}
                 <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 text-slate-400">
-                    <Phone className="w-3.5 h-3.5 text-indigo-400" />
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <Phone className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
                     <span>Số điện thoại:</span>
                   </div>
-                  <div className="font-medium text-slate-200 flex items-center gap-1.5">
+                  <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                     <span>{viewingUser.phone || "Chưa cập nhật"}</span>
                     {viewingUser.phone && (
                       <button
@@ -6097,7 +6162,7 @@ export default function ChatApp() {
                           setCopyToast(true);
                           setTimeout(() => setCopyToast(false), 2000);
                         }}
-                        className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition cursor-pointer"
+                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white rounded transition cursor-pointer"
                         title="Sao chép số điện thoại"
                       >
                         <Copy className="w-3 h-3" />
@@ -6108,11 +6173,11 @@ export default function ChatApp() {
 
                 {/* Ngày tham gia */}
                 <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 text-slate-400">
-                    <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                    <Calendar className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
                     <span>Ngày tham gia:</span>
                   </div>
-                  <span className="font-medium text-slate-200">
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">
                     {viewingUser.createdAt
                       ? new Date(viewingUser.createdAt).toLocaleDateString("vi-VN", {
                           day: "2-digit",

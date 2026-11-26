@@ -128,18 +128,34 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { roomId: string; username: string },
   ) {
     client.join(data.roomId);
+
+    let targetRoomId = data.roomId;
+    let variants: string[] = [data.roomId];
+    if (data.roomId && data.roomId.startsWith('dm_')) {
+      const canonical = await this.chatService.canonicalizeDmRoomId(data.roomId);
+      targetRoomId = canonical.canonicalRoomId;
+      variants = canonical.variantRoomIds;
+      client.join(canonical.canonicalRoomId);
+      for (const v of canonical.variantRoomIds) {
+        client.join(v);
+      }
+    }
+
     this.activeUsers.set(client.id, data.username);
     this.broadcastOnlineUsers();
 
     // Lưu user & room vào database nếu chưa có
     await this.chatService.getOrCreateUser(data.username);
-    await this.chatService.getOrCreateRoom(data.roomId);
+    await this.chatService.getOrCreateRoom(targetRoomId);
 
-    // Lấy lịch sử tin nhắn từ SQL Server và gửi về cho client vừa vào phòng
-    const history = await this.chatService.getRoomMessages(data.roomId);
+    // Lấy lịch sử tin nhắn từ database và gửi về cho client vừa vào phòng
+    const history = await this.chatService.getRoomMessages(targetRoomId);
     client.emit('roomHistory', { roomId: data.roomId, messages: history });
+    if (targetRoomId !== data.roomId) {
+      client.emit('roomHistory', { roomId: targetRoomId, messages: history });
+    }
 
-    return { status: 'joined', roomId: data.roomId };
+    return { status: 'joined', roomId: targetRoomId };
   }
 
   @SubscribeMessage('sendMessage')
@@ -147,9 +163,22 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: SendMessagePayload,
   ) {
-    // 1. Lưu tin nhắn vào Database (SQL Server)!
+    let targetRoomId = payload.roomId;
+    let variants: string[] = [payload.roomId];
+    let resolvedUser1: any = null;
+    let resolvedUser2: any = null;
+
+    if (payload.roomId && payload.roomId.startsWith('dm_')) {
+      const canonical = await this.chatService.canonicalizeDmRoomId(payload.roomId);
+      targetRoomId = canonical.canonicalRoomId;
+      variants = canonical.variantRoomIds;
+      resolvedUser1 = canonical.user1;
+      resolvedUser2 = canonical.user2;
+    }
+
+    // 1. Lưu tin nhắn vào Database (SQL Server / PostgreSQL)!
     const savedMessage = await this.chatService.saveMessage(
-      payload.roomId,
+      targetRoomId,
       payload.sender,
       payload.content,
       {
@@ -166,21 +195,51 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     );
 
     const logText = payload.fileUrl ? `[File: ${payload.fileName}] ${payload.content}` : payload.content;
-    console.log(`[Saved to DB] In ${payload.roomId} from ${payload.sender}: ${logText}`);
+    console.log(`[Saved to DB] In ${targetRoomId} from ${payload.sender}: ${logText}`);
 
-    // 2. Gửi tin nhắn đến tất cả thành viên trong room
-    this.server.to(payload.roomId).emit('newMessage', savedMessage);
+    // 2. Gửi tin nhắn đến canonical room VÀ tất cả phòng biến thể
+    this.server.to(targetRoomId).emit('newMessage', savedMessage);
+    for (const v of variants) {
+      if (v !== targetRoomId) {
+        this.server.to(v).emit('newMessage', { ...savedMessage, roomId: v });
+      }
+    }
+    if (payload.roomId !== targetRoomId && !variants.includes(payload.roomId)) {
+      this.server.to(payload.roomId).emit('newMessage', { ...savedMessage, roomId: payload.roomId });
+    }
 
     // 3. Nếu là tin nhắn riêng 1-1, đồng thời báo cho recipient trong room cá nhân
+    const recipientTargets = new Set<string>();
     if (payload.recipient) {
-      this.server.to(`user:${payload.recipient}`).emit('directMessageNotification', {
+      recipientTargets.add(payload.recipient);
+      recipientTargets.add(payload.recipient.toLowerCase());
+    }
+    if (resolvedUser1) {
+      recipientTargets.add(resolvedUser1.username);
+      recipientTargets.add(resolvedUser1.username.toLowerCase());
+      if (resolvedUser1.displayName) {
+        recipientTargets.add(resolvedUser1.displayName);
+        recipientTargets.add(resolvedUser1.displayName.toLowerCase());
+      }
+    }
+    if (resolvedUser2) {
+      recipientTargets.add(resolvedUser2.username);
+      recipientTargets.add(resolvedUser2.username.toLowerCase());
+      if (resolvedUser2.displayName) {
+        recipientTargets.add(resolvedUser2.displayName);
+        recipientTargets.add(resolvedUser2.displayName.toLowerCase());
+      }
+    }
+
+    for (const target of recipientTargets) {
+      this.server.to(`user:${target}`).emit('directMessageNotification', {
         sender: payload.sender,
         content:
           payload.content ||
           (payload.fileType?.startsWith('image/')
             ? '[Hình ảnh]'
             : `[Tệp] ${payload.fileName || ''}`),
-        roomId: payload.roomId,
+        roomId: targetRoomId,
         fileUrl: payload.fileUrl,
       });
     }

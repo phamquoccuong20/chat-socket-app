@@ -278,7 +278,7 @@ export class AuthService {
 
     if (!user) return [];
 
-    // Bước 2: Quét toàn bộ tin nhắn trong SQL Server thuộc các phòng chat riêng ('dm_...')
+    // Bước 2: Quét toàn bộ tin nhắn trong Database thuộc các phòng chat riêng ('dm_...')
     // mà người này có liên quan (hoặc là người gửi, hoặc tên nằm trong mã phòng)
     // Sắp xếp 'desc' (mới nhất lên đầu) để dễ lấy tin nhắn sau cùng.
     const messages = await this.prisma.message.findMany({
@@ -298,22 +298,55 @@ export class AuthService {
             username: true,
             displayName: true,
             avatarUrl: true,
+            phone: true,
           },
         },
       },
     });
 
-    // Bước 3: Gom nhóm theo từng phòng (roomId) để lấy tin nhắn mới nhất làm preview
+    const allUsers = await this.prisma.user.findMany({
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        phone: true,
+        avatarUrl: true,
+      },
+    });
+
+    // Bước 3: Gom nhóm theo từng ĐỐI TÁC CHAT (Other User) thay vì thuần roomId
+    // Điều này đảm bảo dù có bao nhiêu roomId biến thể thì giữa 2 người CHỈ CÓ 1 dòng trò chuyện duy nhất
     const conversationMap = new Map<string, any>();
 
     for (const msg of messages) {
-      if (!conversationMap.has(msg.roomId)) {
-        // Tách lấy tên của người chat cùng từ roomId (dạng: dm_UserA_UserB)
+      let otherUser: any = null;
+      if (msg.senderId !== user.id) {
+        otherUser = msg.sender;
+      } else {
         const parts = msg.roomId.replace('dm_', '').split('_');
-        const otherName = parts.find((p) => p !== user.username && p !== user.displayName) || parts[0];
+        for (const p of parts) {
+          const match = allUsers.find(
+            (u) =>
+              u.id !== user.id &&
+              (u.username.toLowerCase() === p.toLowerCase() ||
+                u.displayName.toLowerCase() === p.toLowerCase()),
+          );
+          if (match) {
+            otherUser = match;
+            break;
+          }
+        }
+      }
 
-        // Hiển thị nội dung tin nhắn xem trước ở cột trái:
-        // Nếu là ảnh: '[Hình ảnh]', nếu là file: '[Tệp] ...', nếu thu hồi: 'Tin nhắn đã được thu hồi'
+      if (!otherUser || otherUser.id === user.id) continue;
+
+      const partnerKey = otherUser.id;
+      if (!conversationMap.has(partnerKey)) {
+        const canonicalRoomId = `dm_${[
+          user.username.toLowerCase(),
+          otherUser.username.toLowerCase(),
+        ].sort().join('_')}`;
+
         let previewText = msg.content;
         if ((msg as any).isRevoked) {
           previewText = 'Tin nhắn đã được thu hồi';
@@ -325,65 +358,17 @@ export class AuthService {
           }
         }
 
-        conversationMap.set(msg.roomId, {
-          roomId: msg.roomId,
-          contactName: otherName,
+        conversationMap.set(partnerKey, {
+          roomId: canonicalRoomId,
+          contactName: otherUser.displayName || otherUser.username,
           lastMessage: previewText,
-          lastTime: msg.createdAt.toISOString().replace('Z', '+07:00'), // Giờ Việt Nam GMT+7
-          lastSender: msg.sender.displayName || msg.sender.username,
+          lastTime: msg.createdAt.toISOString().replace('Z', '+07:00'),
+          lastSender: msg.sender?.displayName || msg.sender?.username,
+          contactUser: otherUser,
         });
       }
     }
 
-    // Bước 4: Lấy đầy đủ thông tin (Tên hiển thị, Avatar, SĐT) của người chat cùng để trả về Frontend
-    const conversations = [];
-    for (const item of conversationMap.values()) {
-      let contact = await this.prisma.user.findFirst({
-        where: {
-          OR: [
-            { username: item.contactName.toLowerCase() },
-            { username: item.contactName },
-            { displayName: item.contactName },
-          ],
-        },
-        select: {
-          id: true,
-          username: true,
-          displayName: true,
-          phone: true,
-          avatarUrl: true,
-        },
-      });
-
-      // Nếu không tìm thấy bằng so sánh thông thường, tìm kiếm đối chiếu không phân biệt hoa thường
-      if (!contact) {
-        const allUsers = await this.prisma.user.findMany({
-          select: {
-            id: true,
-            username: true,
-            displayName: true,
-            phone: true,
-            avatarUrl: true,
-          },
-        });
-        contact =
-          allUsers.find(
-            (u) =>
-              u.username.toLowerCase() === item.contactName.toLowerCase() ||
-              u.displayName.toLowerCase() === item.contactName.toLowerCase(),
-          ) || null;
-      }
-
-      conversations.push({
-        ...item,
-        contactUser: contact || {
-          username: item.contactName,
-          displayName: item.contactName,
-          avatarUrl: null,
-        },
-      });
-    }
-
-    return conversations;
+    return Array.from(conversationMap.values());
   }
 }

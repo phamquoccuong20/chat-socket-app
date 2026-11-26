@@ -87,18 +87,109 @@ export class ChatService implements OnModuleInit {
     }
   }
 
+  /**
+   * Chuẩn hóa Room ID cho Chat 1-1 (Direct Message):
+   * Đảm bảo giữa 2 người bất kỳ (ví dụ: cuongpq và lhq1808) CHỈ CÓ DUY NHẤT 1 roomId chuẩn:
+   * "dm_cuongpq_lhq1808" (sắp xếp theo username chữ thường).
+   * Đồng thời tìm tất cả các roomId biến thể trước đây (như dm_cuongpq_lê hồng quang, dm_lhq1808_phạm quốc cường)
+   * để gộp lại toàn bộ tin nhắn lịch sử và đồng bộ socket.
+   */
+  async canonicalizeDmRoomId(rawRoomId: string): Promise<{
+    canonicalRoomId: string;
+    variantRoomIds: string[];
+    user1?: any;
+    user2?: any;
+  }> {
+    if (!rawRoomId || !rawRoomId.startsWith('dm_')) {
+      return { canonicalRoomId: rawRoomId, variantRoomIds: [rawRoomId] };
+    }
+
+    const raw = rawRoomId.trim();
+    const withoutPrefix = raw.replace(/^dm_/, '');
+    const parts = withoutPrefix.split('_');
+
+    if (parts.length < 2) {
+      return { canonicalRoomId: raw, variantRoomIds: [raw] };
+    }
+
+    let user1: any = null;
+    let user2: any = null;
+
+    for (let i = 1; i < parts.length; i++) {
+      const p1 = parts.slice(0, i).join('_').trim();
+      const p2 = parts.slice(i).join('_').trim();
+
+      const u1 = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { username: p1.toLowerCase() },
+            { displayName: p1 },
+            { id: p1 },
+          ],
+        },
+      });
+
+      const u2 = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { username: p2.toLowerCase() },
+            { displayName: p2 },
+            { id: p2 },
+          ],
+        },
+      });
+
+      if (u1 && u2 && u1.id !== u2.id) {
+        user1 = u1;
+        user2 = u2;
+        break;
+      }
+    }
+
+    if (!user1 || !user2) {
+      return { canonicalRoomId: raw, variantRoomIds: [raw] };
+    }
+
+    const u1Name = (user1.username || user1.displayName || '').toLowerCase();
+    const u2Name = (user2.username || user2.displayName || '').toLowerCase();
+    const d1Name = (user1.displayName || user1.username || '').toLowerCase();
+    const d2Name = (user2.displayName || user2.username || '').toLowerCase();
+
+    const canonicalRoomId = `dm_${[u1Name, u2Name].sort().join('_')}`;
+
+    const variants = new Set<string>();
+    variants.add(canonicalRoomId);
+    variants.add(raw);
+    variants.add(`dm_${[u1Name, d2Name].sort().join('_')}`);
+    variants.add(`dm_${[u2Name, d1Name].sort().join('_')}`);
+    variants.add(`dm_${[d1Name, d2Name].sort().join('_')}`);
+
+    return {
+      canonicalRoomId,
+      variantRoomIds: Array.from(variants),
+      user1,
+      user2,
+    };
+  }
+
   // Tạo hoặc lấy Room từ database
   async getOrCreateRoom(roomId: string, name?: string, isGroup = true) {
+    let targetRoomId = roomId;
+    if (roomId && roomId.startsWith('dm_')) {
+      const { canonicalRoomId } = await this.canonicalizeDmRoomId(roomId);
+      targetRoomId = canonicalRoomId;
+    }
+
     const existing = await this.prisma.room.findUnique({
-      where: { id: roomId },
+      where: { id: targetRoomId },
     });
 
     if (existing) return existing;
 
     return this.prisma.room.create({
       data: {
-        id: roomId,
-        name: name || roomId,
+        id: targetRoomId,
+        name: name || targetRoomId,
         isGroup,
       },
     });
@@ -123,8 +214,14 @@ export class ChatService implements OnModuleInit {
       replyToContent?: string;
     },
   ) {
+    let targetRoomId = roomId;
+    if (roomId && roomId.startsWith('dm_')) {
+      const { canonicalRoomId } = await this.canonicalizeDmRoomId(roomId);
+      targetRoomId = canonicalRoomId;
+    }
+
     const user = await this.getOrCreateUser(username);
-    const room = await this.getOrCreateRoom(roomId);
+    const room = await this.getOrCreateRoom(targetRoomId, undefined, false);
 
     const vnTime = new Date(Date.now() + 7 * 60 * 60 * 1000);
     const id = require('crypto').randomUUID();
@@ -180,8 +277,37 @@ export class ChatService implements OnModuleInit {
    * Lấy các tin nhắn mới nhất (desc) rồi đảo ngược lại (asc) để hiển thị theo đúng thứ tự thời gian
    */
   async getRoomMessages(roomId: string, limit = 100) {
+    let targetRoomId = roomId;
+    let searchRoomIds = [roomId];
+
+    if (roomId && roomId.startsWith('dm_')) {
+      const { canonicalRoomId, variantRoomIds } = await this.canonicalizeDmRoomId(roomId);
+      targetRoomId = canonicalRoomId;
+      searchRoomIds = variantRoomIds;
+
+      // Tự động di dời các tin nhắn cũ từ các phòng biến thể về canonicalRoomId trong DB
+      if (variantRoomIds.length > 1) {
+        try {
+          await this.getOrCreateRoom(canonicalRoomId, undefined, false);
+          await this.prisma.message.updateMany({
+            where: {
+              roomId: { in: variantRoomIds.filter((v) => v !== canonicalRoomId) },
+            },
+            data: { roomId: canonicalRoomId },
+          });
+        } catch {
+          // Bỏ qua nếu có lỗi
+        }
+      }
+    }
+
     const raw = await this.prisma.message.findMany({
-      where: { roomId },
+      where: {
+        OR: [
+          { roomId: targetRoomId },
+          { roomId: { in: searchRoomIds } },
+        ],
+      },
       include: {
         sender: {
           select: { displayName: true, username: true },
@@ -210,7 +336,7 @@ export class ChatService implements OnModuleInit {
 
       return {
         id: m.id,
-        roomId: m.roomId,
+        roomId: targetRoomId,
         sender: isSystem ? 'System' : (m.sender?.displayName || m.sender?.username || 'Unknown'),
         isSystem,
         content: Boolean(m.isRevoked) ? 'Tin nhắn đã được thu hồi' : m.content,
@@ -233,9 +359,21 @@ export class ChatService implements OnModuleInit {
    * LẤY TOÀN BỘ FILE VÀ HÌNH ẢNH ĐÃ CHIA SẺ TRONG PHÒNG:
    */
   async getRoomMedia(roomId: string) {
+    let targetRoomId = roomId;
+    let searchRoomIds = [roomId];
+
+    if (roomId && roomId.startsWith('dm_')) {
+      const { canonicalRoomId, variantRoomIds } = await this.canonicalizeDmRoomId(roomId);
+      targetRoomId = canonicalRoomId;
+      searchRoomIds = variantRoomIds;
+    }
+
     const raw = await this.prisma.message.findMany({
       where: {
-        roomId,
+        OR: [
+          { roomId: targetRoomId },
+          { roomId: { in: searchRoomIds } },
+        ],
         fileUrl: { not: null },
         isRevoked: false,
       },
@@ -249,7 +387,7 @@ export class ChatService implements OnModuleInit {
 
     return raw.map((m) => ({
       id: m.id,
-      roomId: m.roomId,
+      roomId: targetRoomId,
       sender: m.sender?.displayName || m.sender?.username || 'Unknown',
       content: m.content,
       fileUrl: m.fileUrl,
@@ -972,9 +1110,15 @@ export class ChatService implements OnModuleInit {
    * 7. XÓA CUỘC TRÒ CHUYỆN RIÊNG 1-1:
    */
   async deleteConversation(roomId: string) {
+    let targetRoomIds = [roomId];
+    if (roomId && roomId.startsWith('dm_')) {
+      const { canonicalRoomId, variantRoomIds } = await this.canonicalizeDmRoomId(roomId);
+      targetRoomIds = Array.from(new Set([roomId, canonicalRoomId, ...variantRoomIds]));
+    }
+
     try {
       const files = await this.prisma.message.findMany({
-        where: { roomId, fileUrl: { not: null } },
+        where: { roomId: { in: targetRoomIds }, fileUrl: { not: null } },
         select: { fileUrl: true },
       });
       for (const f of files) {
@@ -994,8 +1138,8 @@ export class ChatService implements OnModuleInit {
       console.error('Lỗi khi xóa file đính kèm cuộc trò chuyện:', e);
     }
 
-    await this.prisma.message.deleteMany({ where: { roomId } });
-    await this.prisma.room.deleteMany({ where: { id: roomId } });
+    await this.prisma.message.deleteMany({ where: { roomId: { in: targetRoomIds } } });
+    await this.prisma.room.deleteMany({ where: { id: { in: targetRoomIds } } });
 
     return { success: true, roomId };
   }
