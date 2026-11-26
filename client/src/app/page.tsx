@@ -132,6 +132,7 @@ export default function ChatApp() {
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const profileBackdropMouseDownRef = useRef(false);
   const [failedAvatarUrls, setFailedAvatarUrls] = useState<Set<string>>(new Set());
+  const [brokenChatImageIds, setBrokenChatImageIds] = useState<Set<string>>(new Set());
 
   // Rooms & Online users
   const [roomList, setRoomList] = useState(DEFAULT_ROOMS);
@@ -3884,19 +3885,32 @@ export default function ChatApp() {
 
                           {/* 1. Hiển thị hình ảnh đính kèm */}
                           {msg.fileUrl && isImageFile(msg.fileType, msg.fileName) && (
-                            <div className="relative group/img overflow-hidden rounded-xl">
-                              <img
-                                src={msg.fileUrl}
-                                alt={msg.fileName || "Ảnh đính kèm"}
-                                className="max-w-xs sm:max-w-sm max-h-72 object-cover rounded-xl cursor-pointer hover:opacity-95 transition"
-                                onClick={() =>
-                                  setPreviewImageModal({
-                                    url: msg.fileUrl!,
-                                    name: msg.fileName || "Ảnh đính kèm",
-                                  })
-                                }
-                              />
-                            </div>
+                            brokenChatImageIds.has(msg.id) ? (
+                              <div className="flex items-center gap-2.5 p-2.5 bg-black/25 rounded-xl border border-white/10 text-xs">
+                                <ImageIcon className="w-4 h-4 text-amber-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <div className="truncate font-medium text-slate-300">{msg.fileName || "Ảnh đính kèm"}</div>
+                                  <div className="text-[10px] text-slate-400">Ảnh không còn trên máy chủ (đã hết hạn)</div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="relative group/img overflow-hidden rounded-xl">
+                                <img
+                                  src={msg.fileUrl}
+                                  alt=""
+                                  className="max-w-xs sm:max-w-sm max-h-72 object-cover rounded-xl cursor-pointer hover:opacity-95 transition"
+                                  onError={() => {
+                                    setBrokenChatImageIds((prev) => new Set(prev).add(msg.id));
+                                  }}
+                                  onClick={() =>
+                                    setPreviewImageModal({
+                                      url: msg.fileUrl!,
+                                      name: msg.fileName || "Ảnh đính kèm",
+                                    })
+                                  }
+                                />
+                              </div>
+                            )
                           )}
 
                           {/* 2. Hiển thị tệp tin tài liệu đính kèm (PDF, Word, Excel, ZIP...) */}
